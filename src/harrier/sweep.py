@@ -26,6 +26,7 @@ from harrier.correlate import correlate
 from harrier.distinct import distinctiveness
 from harrier.runner import run_jobs_sync
 from harrier.schema import Finding
+from harrier.verify import verify_findings
 
 # Candidate budget per depth level (keeps the fan-out bounded).
 _BUDGET = {"quick": 8, "deep": 25}
@@ -119,6 +120,7 @@ def person_sweep(
     permute: bool = True,
     depth: str = "quick",
     consent: bool = False,
+    verify: bool = False,
     max_concurrency: int = 5,
 ) -> dict:
     """Run a full multi-source sweep for a person.
@@ -176,6 +178,18 @@ def person_sweep(
         all_findings.extend(findings)
     correlated = correlate(all_findings)
     surfaced, suppressed = _gate_by_distinctiveness(correlated, anchor_surnames)
+
+    # 5) Optional verification stage: fetch surfaced profiles and score them
+    #    against the anchor — drops enumeration false positives (dead URLs),
+    #    corroborates distinctive matches. Deterministic; the skill still adjudicates.
+    verify_stats = None
+    if verify:
+        anchor = {
+            "name": name, "first": first, "last": last,
+            "maiden": maiden, "married": married, "city": city, "state": state,
+        }
+        surfaced, verify_stats = verify_findings(surfaced, anchor)
+
     sources = _merge_sources(rows)
 
     return {
@@ -183,6 +197,7 @@ def person_sweep(
         "sources": sources,
         "candidates": cands,
         "suppressed": suppressed,
+        "verify": verify_stats,
     }
 
 
@@ -202,16 +217,18 @@ def register(app) -> None:
         permute: bool = True,
         depth: str = "quick",
         consent: bool = False,
+        verify: bool = False,
     ) -> dict:
         """Fan a person out across free OSINT sources; return tier-tagged findings."""
         res = person_sweep(
             name, city=city, state=state, maiden=maiden, married=married,
             nicknames=nicknames, email=email, phone=phone, permute=permute,
-            depth=depth, consent=consent,
+            depth=depth, consent=consent, verify=verify,
         )
         return {
             "findings": [f.model_dump() for f in res["findings"]],
             "sources": res["sources"],
             "candidates": res["candidates"],
             "suppressed": res["suppressed"],
+            "verify": res["verify"],
         }
