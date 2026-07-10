@@ -121,6 +121,13 @@ def _parse_maigret_json(path: str, selector: str) -> list[Finding]:
         if not claimed:
             continue
         url = info.get("url_user") or info.get("url")
+        # Phase 3a: Maigret extracts profile METADATA (real name, location, …),
+        # not just existence — capture it for the verification pre-check.
+        ids = info.get("ids") if isinstance(info.get("ids"), dict) else {}
+        raw: dict = {"site": site}
+        if ids:
+            raw["ids"] = ids
+        fullname = ids.get("fullname") or ids.get("name")
         findings.append(
             Finding(
                 selector=selector,
@@ -130,7 +137,8 @@ def _parse_maigret_json(path: str, selector: str) -> list[Finding]:
                 exists=True,
                 confidence="low",
                 tier="free",
-                raw={"site": site},
+                reason=(f"maigret extracted: {fullname}" if fullname else None),
+                raw=raw,
             )
         )
     return findings
@@ -140,10 +148,12 @@ def _run_maigret(selector: str, timeout: int) -> AdapterResult | None:
     if not binary_available(MAIGRET_BIN):
         return None
     with tempfile.TemporaryDirectory(prefix="harrier_maigret_") as tmp:
+        # Bound Maigret (it can sweep 3000+ sites): top sites + short per-site
+        # timeout so engine="maigret" stays usable; overall bound is `timeout`.
         args = [MAIGRET_BIN, selector, "--json", "simple", "--folderoutput", tmp,
-                "--timeout", str(timeout)]
+                "--top-sites", "50", "--timeout", "5"]
         try:
-            run_subprocess(args, timeout=timeout + 5)
+            run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
             return AdapterResult(status="unavailable", tool="maigret",
                                  reason="maigret timed out")
@@ -164,27 +174,31 @@ def _run_maigret(selector: str, timeout: int) -> AdapterResult | None:
 
 def run(
     selector: str, timeout: int = 60, per_site_timeout: int = 5,
-    sites: list[str] | None = None, **opts
+    sites: list[str] | None = None, engine: str = "sherlock", **opts
 ) -> AdapterResult:
     """Sweep a username across site-enumeration tools.
 
-    Tries Sherlock first, then Maigret. If neither binary is installed, returns
-    ``status="unavailable"`` with no findings. ``timeout`` bounds the whole
-    sweep; ``per_site_timeout`` is the per-request timeout passed to the tool;
-    ``sites`` restricts the sweep (defaults to :data:`DEFAULT_SITES` so fan-out
-    stays fast — pass an explicit list to widen or narrow it).
+    ``engine`` selects the primary tool: ``"sherlock"`` (default — fast existence
+    check) or ``"maigret"`` (slower, but extracts profile METADATA for the
+    verification pre-check, Phase 3a). The other is the fallback if the primary
+    binary is absent. ``timeout`` bounds the whole sweep; ``per_site_timeout`` is
+    the per-request timeout; ``sites`` restricts the Sherlock sweep (defaults to
+    :data:`DEFAULT_SITES` so fan-out stays fast).
     """
     try:
         selector = validate_selector(selector)
     except SelectorError as exc:
         return AdapterResult(status="error", tool=TOOL, reason=str(exc))
 
-    result = _run_sherlock(
-        selector, timeout, per_site_timeout,
-        DEFAULT_SITES if sites is None else sites,
-    )
-    if result is None:
+    site_list = DEFAULT_SITES if sites is None else sites
+    if engine == "maigret":
         result = _run_maigret(selector, timeout)
+        if result is None:  # maigret absent → fall back to sherlock existence
+            result = _run_sherlock(selector, timeout, per_site_timeout, site_list)
+    else:
+        result = _run_sherlock(selector, timeout, per_site_timeout, site_list)
+        if result is None:
+            result = _run_maigret(selector, timeout)
     if result is None:
         return AdapterResult(
             status="unavailable",

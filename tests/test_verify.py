@@ -84,6 +84,21 @@ def test_render_fallback_only_when_unverifiable(monkeypatch):
     assert f.raw["verify"]["verdict"] == "false_positive"
 
 
+def test_metadata_precheck_corroborates_without_fetch(monkeypatch):
+    # a finding carrying Maigret-extracted metadata is corroborated WITHOUT fetching
+    def _no_fetch(url, timeout=10):
+        raise AssertionError("must not fetch when metadata already corroborates")
+    monkeypatch.setattr(verify, "_fetch", _no_fetch)
+    f = Finding(selector="awademan", source_tool="maigret", url="https://x/awademan",
+                value="x", exists=True, confidence="low",
+                raw={"ids": {"fullname": "Amanda Wademan", "location": "Nebraska"}})
+    verify_finding(f, ANCHOR, render_fn=None)
+    assert f.raw["verify"]["verdict"] == "corroborated"
+    assert f.raw["verify"]["status"] == "metadata"
+    assert "wademan" in f.raw["verify"]["matched"]
+    assert f.confidence == "high"  # two tokens (wademan + nebraska)
+
+
 def test_verify_findings_reports_stats(monkeypatch):
     monkeypatch.setattr(verify, "_fetch", lambda url, timeout=10: (404, ""))
     out, stats = verify_findings([_f(url="https://s/1"), _f(url="https://s/2")], ANCHOR,

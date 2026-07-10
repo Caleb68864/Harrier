@@ -157,9 +157,41 @@ def _classify_reachable(finding: Finding, anchor: dict, status: int, body: str,
     finding.raw = raw
 
 
+def _metadata_text(finding: Finding) -> str:
+    """Text from tool-extracted metadata (e.g. Maigret `ids`) for the pre-check."""
+    bits: list[str] = []
+    ids = (finding.raw or {}).get("ids")
+    if isinstance(ids, dict):
+        bits.extend(str(v) for v in ids.values())
+    if finding.reason:
+        bits.append(finding.reason)
+    return " ".join(bits).lower()
+
+
+def _precheck_metadata(finding: Finding, anchor: dict) -> bool:
+    """Corroborate from already-extracted metadata — free, no network. True if matched."""
+    text = _metadata_text(finding)
+    if not text:
+        return False
+    matched = [t for t in _strong_tokens(anchor) if _word_present(t, text)]
+    if not matched:
+        return False
+    raw = dict(finding.raw)
+    finding.exists = True
+    finding.confidence = "high" if len(matched) >= 2 else "medium"
+    finding.reason = f"verify: corroborated by extracted metadata ({', '.join(matched)})"
+    raw["verify"] = {"status": "metadata", "verdict": "corroborated",
+                     "matched": matched, "rendered": False}
+    finding.raw = raw
+    return True
+
+
 def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT,
                    render_fn=None) -> Finding:
     """Fetch (and optionally render) a finding's profile; update it (in place)."""
+    # Phase 3a: corroborate from tool-extracted metadata first — free, no fetch.
+    if _precheck_metadata(finding, anchor):
+        return finding
     if not finding.url:
         return finding
     status, body = _fetch(finding.url, timeout)

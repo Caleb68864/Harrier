@@ -122,6 +122,7 @@ def person_sweep(
     depth: str = "quick",
     consent: bool = False,
     verify: bool = False,
+    engine: str = "sherlock",
     max_concurrency: int = 5,
 ) -> dict:
     """Run a full multi-source sweep for a person.
@@ -151,7 +152,7 @@ def person_sweep(
     # 2) Build the job list (tool, zero-arg callable).
     jobs: list[tuple[str, Any]] = []
     for c in cands:
-        jobs.append(("username", (lambda c=c: username_mod.run(c))))
+        jobs.append(("username", (lambda c=c: username_mod.run(c, engine=engine))))
     if email:
         jobs.append(("email", (lambda: email_mod.run(email))))
         dom = email.split("@")[-1] if "@" in email else None
@@ -223,12 +224,13 @@ def register(app) -> None:
         depth: str = "quick",
         consent: bool = False,
         verify: bool = False,
+        engine: str = "sherlock",
     ) -> dict:
         """Fan a person out across free OSINT sources; return tier-tagged findings."""
         res = person_sweep(
             name, city=city, state=state, maiden=maiden, married=married,
             nicknames=nicknames, email=email, phone=phone, permute=permute,
-            depth=depth, consent=consent, verify=verify,
+            depth=depth, consent=consent, verify=verify, engine=engine,
         )
         return {
             "findings": [f.model_dump() for f in res["findings"]],

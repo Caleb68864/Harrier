@@ -91,6 +91,27 @@ def test_username_sherlock_invoked_with_list_args(monkeypatch, tmp_path):
     assert res.status == "ok"
 
 
+def test_maigret_parses_ids_metadata(tmp_path):
+    """Phase 3a: Maigret's extracted `ids` metadata is captured on the Finding."""
+    import json
+
+    report = tmp_path / "report_awademan_simple.json"
+    report.write_text(
+        json.dumps({
+            "SomeSite": {
+                "status": {"status": "Claimed"},
+                "url_user": "https://s/awademan",
+                "ids": {"fullname": "Amanda Wademan", "location": "Nebraska"},
+            }
+        }),
+        encoding="utf-8",
+    )
+    findings = username._parse_maigret_json(str(report), "awademan")
+    assert len(findings) == 1
+    assert findings[0].raw["ids"]["fullname"] == "Amanda Wademan"
+    assert "Amanda Wademan" in (findings[0].reason or "")
+
+
 # --- email adapter ------------------------------------------------------------
 
 def test_email_unavailable_when_libs_absent(monkeypatch):
