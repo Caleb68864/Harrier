@@ -24,7 +24,7 @@ def register_all(app: FastMCP) -> None:
     the server still starts even if an optional dependency is missing at import
     time (adapters degrade to `unavailable` at call time, not import time).
     """
-    from harrier import assist, candidates
+    from harrier import assist, candidates, investigate
     from harrier.adapters import court, domain, email, genealogy, phone, username
     from harrier.adapters import people_search
     from harrier import sweep
@@ -40,6 +40,7 @@ def register_all(app: FastMCP) -> None:
         genealogy,
         assist,
         sweep,
+        investigate,
     ]
     for module in modules:
         register = getattr(module, "register", None)
