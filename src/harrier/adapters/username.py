@@ -56,8 +56,17 @@ def _parse_sherlock_file(path: str, selector: str) -> list[Finding]:
     return findings
 
 
-def _run_sherlock(selector: str, timeout: int) -> AdapterResult | None:
-    """Run Sherlock; return an AdapterResult, or None if the binary is absent."""
+def _run_sherlock(
+    selector: str, timeout: int, per_site_timeout: int
+) -> AdapterResult | None:
+    """Run Sherlock; return an AdapterResult, or None if the binary is absent.
+
+    ``per_site_timeout`` is Sherlock's per-request ``--timeout`` (kept small so
+    the full multi-site sweep actually finishes within ``timeout``, which bounds
+    the whole subprocess). The original bug set the per-site timeout to the
+    overall budget, so a few slow sites ate the entire budget and the sweep
+    returned nothing.
+    """
     if not binary_available(SHERLOCK_BIN):
         return None
     with tempfile.TemporaryDirectory(prefix="harrier_sherlock_") as tmp:
@@ -68,10 +77,10 @@ def _run_sherlock(selector: str, timeout: int) -> AdapterResult | None:
             tmp,
             "--print-found",
             "--timeout",
-            str(timeout),
+            str(per_site_timeout),
         ]
         try:
-            run_subprocess(args, timeout=timeout + 5)
+            run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
             return AdapterResult(status="unavailable", tool="sherlock",
                                  reason="sherlock timed out")
@@ -141,18 +150,21 @@ def _run_maigret(selector: str, timeout: int) -> AdapterResult | None:
     return AdapterResult(findings, status="ok", tool="maigret")
 
 
-def run(selector: str, timeout: int = 30, **opts) -> AdapterResult:
+def run(
+    selector: str, timeout: int = 90, per_site_timeout: int = 5, **opts
+) -> AdapterResult:
     """Sweep a username across site-enumeration tools.
 
     Tries Sherlock first, then Maigret. If neither binary is installed, returns
-    ``status="unavailable"`` with no findings.
+    ``status="unavailable"`` with no findings. ``timeout`` bounds the whole
+    sweep; ``per_site_timeout`` is the per-request timeout passed to the tool.
     """
     try:
         selector = validate_selector(selector)
     except SelectorError as exc:
         return AdapterResult(status="error", tool=TOOL, reason=str(exc))
 
-    result = _run_sherlock(selector, timeout)
+    result = _run_sherlock(selector, timeout, per_site_timeout)
     if result is None:
         result = _run_maigret(selector, timeout)
     if result is None:

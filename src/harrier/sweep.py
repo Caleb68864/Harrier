@@ -12,6 +12,7 @@ sweep returns an empty ``findings`` list with all ``sources[]`` marked
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from harrier import candidates as candidates_mod
@@ -40,6 +41,10 @@ def _split_name(name: str) -> tuple[str, str]:
 
 def _normalize(tool: str, result: Any) -> tuple[str, str, list[Finding]]:
     """Coerce any adapter return into ``(tool, status, findings)``."""
+    # A genuine timeout is honest degradation, not a code error — classify it as
+    # such rather than lumping it in with "error" (nested-timeout misclassification).
+    if isinstance(result, (asyncio.TimeoutError, TimeoutError)):
+        return tool, "timeout", []
     if isinstance(result, Exception):
         return tool, "error", []
     if isinstance(result, AdapterResult):
@@ -111,8 +116,11 @@ def person_sweep(
          (lambda: people_mod.run(name, city_or_state=city_or_state, consent=consent)))
     )
 
-    # 3) Fan out under the concurrency cap + jitter.
-    raw = run_jobs_sync(jobs, max_concurrency=max_concurrency)
+    # 3) Fan out under the concurrency cap + jitter. The runner's per-job budget
+    #    must exceed each adapter's own timeout (username overall = 60s) so a
+    #    completing tool isn't killed early and surfaced as a spurious error
+    #    (username overall budget = 90s, so the runner allows 105s).
+    raw = run_jobs_sync(jobs, max_concurrency=max_concurrency, timeout=105)
     rows = [_normalize(tool, result) for tool, result in raw]
 
     # 4) Merge + correlate.
