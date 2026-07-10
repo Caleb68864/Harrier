@@ -23,11 +23,49 @@ from harrier.adapters import people_search as people_mod
 from harrier.adapters import phone as phone_mod
 from harrier.adapters import username as username_mod
 from harrier.correlate import correlate
+from harrier.distinct import distinctiveness
 from harrier.runner import run_jobs_sync
 from harrier.schema import Finding
 
 # Candidate budget per depth level (keeps the fan-out bounded).
 _BUDGET = {"quick": 8, "deep": 25}
+
+# Username existence hits below this distinctiveness are generic noise (a common
+# handle being "taken" is near-zero identity evidence) and are suppressed from
+# findings — reported as a count so nothing vanishes silently.
+_MIN_DISTINCTIVENESS = 0.5
+_EXISTENCE_TOOLS = {"sherlock", "maigret"}
+
+
+def _gate_by_distinctiveness(
+    findings: list[Finding], anchor_surnames: list[str]
+) -> tuple[list[Finding], int]:
+    """Surface distinctive leads; suppress generic existence-only noise.
+
+    Only single-source username *existence* hits are gated — cross-source
+    ``high`` findings, blocked/manual items, and non-username findings pass
+    through untouched. A distinctive existence hit is capped at ``medium`` (an
+    unverified lead), never ``high``; that is reserved for corroboration.
+    """
+    kept: list[Finding] = []
+    suppressed = 0
+    for f in findings:
+        gate = (
+            f.source_tool in _EXISTENCE_TOOLS
+            and f.tier == "free"
+            and f.confidence != "high"
+        )
+        if not gate:
+            kept.append(f)
+            continue
+        d = distinctiveness(f.selector or "", anchor_surnames)
+        f.distinctiveness = round(d, 2)
+        if d < _MIN_DISTINCTIVENESS:
+            suppressed += 1
+            continue
+        f.confidence = "medium" if d >= 0.6 else "low"
+        kept.append(f)
+    return kept, suppressed
 
 
 def _split_name(name: str) -> tuple[str, str]:
@@ -74,6 +112,7 @@ def person_sweep(
     city: str | None = None,
     state: str | None = None,
     maiden: str | None = None,
+    married: str | None = None,
     nicknames: list[str] | None = None,
     email: str | None = None,
     phone: str | None = None,
@@ -90,13 +129,21 @@ def person_sweep(
     nicknames = nicknames or []
     first, last = _split_name(name)
     budget = _BUDGET.get(depth, _BUDGET["quick"])
+    anchor_surnames = [s for s in (last, maiden, married) if s]
 
-    # 1) Candidate permutations (usernames / email-locals).
+    # 1) Candidate permutations. Generate a generous pool, then rank by
+    #    DISTINCTIVENESS and keep the top `budget` — so rare, identity-bearing
+    #    maiden-name handles (amandawademan) are actually swept instead of being
+    #    truncated behind common-shape handles (amanda.bennett) that the plain
+    #    likelihood ordering puts first.
     cands: list[str] = []
     if permute and first and last:
-        cands = candidates_mod.generate_candidates(
-            first, last, maiden=maiden, nicknames=nicknames, max=budget
+        pool = candidates_mod.generate_candidates(
+            first, last, maiden=maiden, married=married, nicknames=nicknames,
+            max=max(budget * 3, 24),
         )
+        pool.sort(key=lambda c: distinctiveness(c, anchor_surnames), reverse=True)
+        cands = pool[:budget]
 
     # 2) Build the job list (tool, zero-arg callable).
     jobs: list[tuple[str, Any]] = []
@@ -128,12 +175,14 @@ def person_sweep(
     for _, _, findings in rows:
         all_findings.extend(findings)
     correlated = correlate(all_findings)
+    surfaced, suppressed = _gate_by_distinctiveness(correlated, anchor_surnames)
     sources = _merge_sources(rows)
 
     return {
-        "findings": correlated,
+        "findings": surfaced,
         "sources": sources,
         "candidates": cands,
+        "suppressed": suppressed,
     }
 
 
@@ -146,6 +195,7 @@ def register(app) -> None:
         city: str | None = None,
         state: str | None = None,
         maiden: str | None = None,
+        married: str | None = None,
         nicknames: list[str] | None = None,
         email: str | None = None,
         phone: str | None = None,
@@ -155,11 +205,13 @@ def register(app) -> None:
     ) -> dict:
         """Fan a person out across free OSINT sources; return tier-tagged findings."""
         res = person_sweep(
-            name, city=city, state=state, maiden=maiden, nicknames=nicknames,
-            email=email, phone=phone, permute=permute, depth=depth, consent=consent,
+            name, city=city, state=state, maiden=maiden, married=married,
+            nicknames=nicknames, email=email, phone=phone, permute=permute,
+            depth=depth, consent=consent,
         )
         return {
             "findings": [f.model_dump() for f in res["findings"]],
             "sources": res["sources"],
             "candidates": res["candidates"],
+            "suppressed": res["suppressed"],
         }

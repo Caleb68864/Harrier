@@ -33,6 +33,10 @@ class Finding(BaseModel):
                      browser), "blocked" (refused / gated / CAPTCHA).
       reason      -- human-readable note; for blocked/unavailable findings this
                      carries the manual step or the cause.
+      distinctiveness -- [0,1] prior on how identity-bearing the selector is
+                     (set for username existence hits): a rare anchor-derived
+                     handle scores high, a common handle near zero. Used to
+                     surface leads and suppress noise. None when not scored.
       raw         -- the untouched adapter payload for auditing (never persisted
                      to disk by default).
     """
@@ -45,4 +49,5 @@ class Finding(BaseModel):
     confidence: Confidence = "low"
     tier: Tier = "free"
     reason: Optional[str] = None
+    distinctiveness: Optional[float] = None
     raw: dict[str, Any] = Field(default_factory=dict)

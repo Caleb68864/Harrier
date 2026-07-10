@@ -123,18 +123,32 @@ def test_integration_fanout(monkeypatch):
 
     monkeypatch.setattr(sweep.candidates_mod, "generate_candidates", spy_gen)
 
-    fixture = [Finding(selector="amandab", source_tool="sherlock",
-                       value="github.com/amandab", exists=True)]
+    fixture = [Finding(selector="amandawademan", source_tool="sherlock",
+                       value="reddit.com/u/amandawademan", exists=True)]
     _stub(monkeypatch, username_findings=fixture)
 
-    res = sweep.person_sweep("Amanda Bennett", city="Omaha", depth="quick")
+    res = sweep.person_sweep("Amanda Bennett", city="Omaha", maiden="Wademan",
+                             depth="quick")
 
     assert calls["gen"] == 1
     assert res["candidates"]  # non-empty
     assert isinstance(res["findings"], list)
+    # a distinctive (maiden-name) handle survives the distinctiveness gate
     assert any(f.source_tool == "sherlock" for f in res["findings"])
     tools = {s["tool"] for s in res["sources"]}
     assert {"username", "people_search"}.issubset(tools)
+
+
+def test_generic_existence_hits_suppressed(monkeypatch):
+    """Common-handle existence hits are suppressed as noise; count reported."""
+    fixture = [Finding(selector="abennett", source_tool="sherlock",
+                       value="github.com/abennett", exists=True)]
+    _stub(monkeypatch, username_findings=fixture)
+    res = sweep.person_sweep("Amanda Bennett", maiden="Wademan", depth="quick")
+    # a generic handle does not surface as a finding...
+    assert not any(f.source_tool == "sherlock" for f in res["findings"])
+    # ...but is accounted for, not silently dropped
+    assert res["suppressed"] >= 1
 
 
 def test_all_unavailable_returns_empty_no_raise(monkeypatch):
