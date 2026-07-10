@@ -1,0 +1,29 @@
+[project]
+name = "harrier"
+version = "0.1.0"
+description = "Harrier — free-source OSINT MCP server for the /osint skill"
+readme = "README.md"
+authors = [
+    { name = "Caleb Bennett", email = "caleb-dev@logicnebraska.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.28.1",
+    "pydantic>=2.13.4",
+]
+
+[project.scripts]
+harrier-mcp = "harrier.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
