@@ -8,8 +8,12 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "holehe>=1.61",
+    "maigret>=0.6.2",
     "mcp[cli]>=1.28.1",
     "pydantic>=2.13.4",
+    "sherlock-project>=0.16.0",
+    "socialscan>=2.0.1",
 ]
 
 [project.scripts]
