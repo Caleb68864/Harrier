@@ -64,8 +64,29 @@ def test_js_shell_marked_unverifiable(monkeypatch):
     assert f.raw["verify"]["verdict"] == "unverifiable"
 
 
+def test_render_fallback_upgrades_unverifiable(monkeypatch):
+    # plain fetch returns a JS shell (unverifiable); render returns readable text
+    monkeypatch.setattr(verify, "_fetch", lambda url, timeout=10: (200, "<title>App</title> loading"))
+    monkeypatch.setattr(verify, "_render_page",
+                        lambda url, timeout=20: "<title>Amanda Wademan</title> lives in Nebraska")
+    f = verify_finding(_f(), ANCHOR, render_fn=verify._render_page)
+    assert f.raw["verify"]["verdict"] == "corroborated"
+    assert f.raw["verify"]["rendered"] is True
+    assert f.confidence == "high"
+
+
+def test_render_fallback_only_when_unverifiable(monkeypatch):
+    # a hard 404 is decided without rendering — render must not be consulted
+    monkeypatch.setattr(verify, "_fetch", lambda url, timeout=10: (404, ""))
+    def _boom(url, timeout=20):  # would fail the test if called
+        raise AssertionError("render should not run on a hard 404")
+    f = verify_finding(_f(), ANCHOR, render_fn=_boom)
+    assert f.raw["verify"]["verdict"] == "false_positive"
+
+
 def test_verify_findings_reports_stats(monkeypatch):
     monkeypatch.setattr(verify, "_fetch", lambda url, timeout=10: (404, ""))
-    out, stats = verify_findings([_f(url="https://s/1"), _f(url="https://s/2")], ANCHOR)
+    out, stats = verify_findings([_f(url="https://s/1"), _f(url="https://s/2")], ANCHOR,
+                                 render=False)
     assert stats["verified"] == 2
     assert stats["false_positive"] == 2

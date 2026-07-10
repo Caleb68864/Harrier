@@ -1,22 +1,20 @@
-"""Profile verification stage (roadmap Phase 3b).
+"""Profile verification stage (roadmap Phase 3b + 3b-render).
 
 Enumeration only proves a handle is TAKEN. This stage fetches a surfaced
-finding's profile URL and checks it against the target anchor, DETERMINISTICALLY
+finding's profile and checks it against the target anchor, DETERMINISTICALLY
 (the semantic "is this the same person?" judgment stays in the /osint skill):
 
-  * dead / 404 / gone page → the enumeration hit was a FALSE POSITIVE: set
-    ``exists=False``, drop confidence to "low", tag the reason. (This is the
-    class the live Amanda run hit — Sherlock said the Spotify handle existed;
-    fetching it returned 404.)
+  * dead / 404 / soft-404 page → the enumeration hit was a FALSE POSITIVE.
   * page text corroborates a DISTINCTIVE anchor token (maiden surname, an
-    uncommon location) as a standalone word → promote confidence + record which
-    fields matched.
-  * page reachable but no corroboration → left as an unverified lead.
-  * fetch blocked / errored → cannot verify; left unchanged, noted.
+    uncommon location) as a standalone word → promote confidence.
+  * reachable but no corroboration → left as an unverified lead.
+  * fetch blocked / JS-shell → try a **Playwright render** (a real browser that
+    executes JS); only if that still can't read it is the finding left
+    ``unverifiable`` ("confirm manually").
 
 Word-boundary matching means the handle itself never self-corroborates: the page
 for ``amandawademan`` contains that concatenated handle, but ``\bwademan\b`` only
-matches a *standalone* "wademan" (e.g. a real display name), not the handle echo.
+matches a *standalone* "wademan" (a real display name), not the handle echo.
 """
 
 from __future__ import annotations
@@ -33,20 +31,23 @@ _UA = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 _FETCH_TIMEOUT = 10
+_RENDER_TIMEOUT = 20
 _DEAD_STATUSES = {404, 410}
 _UNVERIFIABLE_STATUSES = {0, 401, 403, 429, 503}
 
-# Many SPAs answer 200 with a "not found" body (a soft-404). These phrases in the
-# rendered/identifying text mean the profile does not exist despite the 200.
+# Many SPAs answer 200 with a "not found" body (a soft-404).
 _SOFT_404_PHRASES = (
     "page not found", "couldn't find", "could not find this", "user not found",
     "page doesn't exist", "page does not exist", "no longer available",
     "sorry, we couldn't", "this page is not available", "content is not available",
 )
 
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
 
 def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str]:
-    """GET a URL; return (status, text). status 0 on network error."""
+    """Plain GET; return (status, text). status 0 on network error."""
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -58,8 +59,26 @@ def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str]:
         return 0, ""
 
 
-_TAG_RE = re.compile(r"<[^>]+>")
-_WS_RE = re.compile(r"\s+")
+def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
+    """Render a page in headless Chromium (executes JS). None if unavailable/failed."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:  # noqa: BLE001 — browser lib absent
+        return None
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            ctx = browser.new_context(user_agent=_UA)
+            page = ctx.new_page()
+            try:
+                page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
+                page.wait_for_timeout(1500)  # let client-side JS populate
+                html = page.content()
+            finally:
+                browser.close()
+            return html
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _identifying_text(body: str) -> str:
@@ -74,7 +93,6 @@ def _identifying_text(body: str) -> str:
         re.I,
     ):
         parts.append(m.group(1))
-    # a bounded sample of de-tagged body text
     text = _WS_RE.sub(" ", _TAG_RE.sub(" ", body))
     parts.append(text[:4000])
     return " ".join(parts).lower()
@@ -99,8 +117,49 @@ def _word_present(token: str, text: str) -> bool:
     return re.search(rf"\b{re.escape(token)}\b", text) is not None
 
 
-def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT) -> Finding:
-    """Fetch a finding's profile and update it against the anchor (in place)."""
+def _classify_reachable(finding: Finding, anchor: dict, status: int, body: str,
+                        rendered: bool) -> None:
+    """Classify a readable (2xx) page against the anchor; update the finding."""
+    text = _identifying_text(body)
+    raw = dict(finding.raw)
+    suffix = " (rendered)" if rendered else ""
+
+    if any(p in text for p in _SOFT_404_PHRASES):
+        finding.exists = False
+        finding.confidence = "low"
+        finding.reason = "verify: soft-404 — page reports the profile does not exist" + suffix
+        raw["verify"] = {"status": status, "verdict": "false_positive", "rendered": rendered}
+        finding.raw = raw
+        return
+
+    matched = [t for t in _strong_tokens(anchor) if _word_present(t, text)]
+    if matched:
+        finding.exists = True
+        finding.confidence = "high" if len(matched) >= 2 else "medium"
+        finding.reason = f"verify: corroborated by {', '.join(matched)}" + suffix
+        raw["verify"] = {"status": status, "verdict": "corroborated",
+                         "matched": matched, "rendered": rendered}
+        finding.raw = raw
+        return
+
+    # No corroboration. If NOT rendered and the handle isn't even present, the 200
+    # is a JS shell we couldn't read — mark unverifiable so a render can retry.
+    # If rendered (we executed JS) and still nothing, it's a genuine no-match.
+    norm = re.sub(r"[^a-z0-9]", "", text)
+    sel = re.sub(r"[^a-z0-9]", "", (finding.selector or "").lower())
+    if not rendered and sel and sel not in norm:
+        raw["verify"] = {"status": status, "verdict": "unverifiable", "rendered": False}
+        finding.reason = "verify: 200 but JS-rendered/soft page — content not readable, confirm manually"
+    else:
+        raw["verify"] = {"status": status, "verdict": "reachable_no_corroboration",
+                         "rendered": rendered}
+        finding.reason = "verify: reachable, no anchor corroboration on page" + suffix
+    finding.raw = raw
+
+
+def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT,
+                   render_fn=None) -> Finding:
+    """Fetch (and optionally render) a finding's profile; update it (in place)."""
     if not finding.url:
         return finding
     status, body = _fetch(finding.url, timeout)
@@ -110,71 +169,43 @@ def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT
         finding.exists = False
         finding.confidence = "low"
         finding.reason = f"verify: HTTP {status} — profile not found (enumeration false positive)"
-        raw["verify"] = {"status": status, "verdict": "false_positive"}
+        raw["verify"] = {"status": status, "verdict": "false_positive", "rendered": False}
         finding.raw = raw
         return finding
 
     if status in _UNVERIFIABLE_STATUSES:
-        raw["verify"] = {"status": status, "verdict": "unverifiable"}
+        raw["verify"] = {"status": status, "verdict": "unverifiable", "rendered": False}
         finding.reason = (finding.reason + " · " if finding.reason else "") + \
             f"verify: unreachable (HTTP {status}) — confirm manually"
         finding.raw = raw
-        return finding
-
-    # Reachable (2xx). First: soft-404 pages that answer 200 with a "not found" body.
-    text = _identifying_text(body)
-    if any(p in text for p in _SOFT_404_PHRASES):
-        finding.exists = False
-        finding.confidence = "low"
-        finding.reason = "verify: soft-404 — page reports the profile does not exist"
-        raw["verify"] = {"status": status, "verdict": "false_positive"}
-        finding.raw = raw
-        return finding
-
-    matched = [t for t in _strong_tokens(anchor) if _word_present(t, text)]
-    if matched:
-        finding.exists = True
-        finding.confidence = "high" if len(matched) >= 2 else "medium"
-        finding.reason = f"verify: corroborated by {', '.join(matched)}"
-        raw["verify"] = {"status": status, "verdict": "corroborated", "matched": matched}
-        finding.raw = raw
-        return finding
-
-    # No corroboration. If the handle isn't even present in the readable text, the
-    # 200 is a JS shell / generic page we couldn't actually read — say so honestly
-    # rather than implying we inspected the profile and found nothing.
-    norm = re.sub(r"[^a-z0-9]", "", text)
-    sel = re.sub(r"[^a-z0-9]", "", (finding.selector or "").lower())
-    if sel and sel not in norm:
-        raw["verify"] = {"status": status, "verdict": "unverifiable"}
-        finding.reason = (finding.reason + " · " if finding.reason else "") + \
-            "verify: 200 but JS-rendered/soft page — content not readable, confirm manually"
     else:
-        raw["verify"] = {"status": status, "verdict": "reachable_no_corroboration"}
-        finding.reason = (finding.reason + " · " if finding.reason else "") + \
-            "verify: reachable, no anchor corroboration on page"
-    finding.raw = raw
+        _classify_reachable(finding, anchor, status, body, rendered=False)
+
+    # Render fallback: retry JS-shell / blocked pages in a real browser.
+    if render_fn and (finding.raw.get("verify") or {}).get("verdict") == "unverifiable":
+        html = render_fn(finding.url)
+        if html:
+            _classify_reachable(finding, anchor, 200, html, rendered=True)
     return finding
 
 
-def verify_findings(
-    findings: list[Finding], anchor: dict, max_verify: int = 12,
-    timeout: int = _FETCH_TIMEOUT,
-) -> tuple[list[Finding], dict]:
-    """Verify up to ``max_verify`` findings that have a URL. Returns (findings, stats)."""
-    stats = {"verified": 0, "false_positive": 0, "corroborated": 0, "unverifiable": 0}
+def verify_findings(findings: list[Finding], anchor: dict, max_verify: int = 12,
+                    timeout: int = _FETCH_TIMEOUT, render: bool = True) -> tuple[list[Finding], dict]:
+    """Verify up to ``max_verify`` findings with a URL. Returns (findings, stats)."""
+    stats = {"verified": 0, "false_positive": 0, "corroborated": 0,
+             "unverifiable": 0, "rendered": 0}
+    render_fn = _render_page if render else None
     budget = max_verify
     for f in findings:
         if budget <= 0 or not f.url:
             continue
         budget -= 1
-        verify_finding(f, anchor, timeout=timeout)
-        verdict = (f.raw.get("verify") or {}).get("verdict")
+        verify_finding(f, anchor, timeout=timeout, render_fn=render_fn)
+        v = f.raw.get("verify") or {}
         stats["verified"] += 1
-        if verdict == "false_positive":
-            stats["false_positive"] += 1
-        elif verdict == "corroborated":
-            stats["corroborated"] += 1
-        elif verdict == "unverifiable":
-            stats["unverifiable"] += 1
+        if v.get("rendered"):
+            stats["rendered"] += 1
+        verdict = v.get("verdict")
+        if verdict in stats:
+            stats[verdict] += 1
     return findings, stats
