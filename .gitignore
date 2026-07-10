@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.uv/
+dist/
+build/
+*.egg-info/
+.env
+# never commit collected OSINT output
+/out/
+*.findings.json

@@ -1,0 +1,9 @@
+{
+  "project_name": "Harrier",
+  "project_vault": "docs",
+  "tech_stack": ["python", "fastmcp", "playwright", "uv"],
+  "build_command": "uv sync",
+  "test_command": "uv run pytest",
+  "start_command": "uv run python -m harrier.server",
+  "infrastructure": null
+}
