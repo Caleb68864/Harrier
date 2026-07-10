@@ -33,6 +33,9 @@ def test_sherlock_per_site_timeout_is_small_and_overall_is_budget(monkeypatch):
     i = args.index("--timeout")
     assert args[i + 1] == "5", "per-site timeout must be small, not the whole budget"
     assert captured["timeout"] == 60, "subprocess bound must be the full budget"
+    # curated --site list keeps the fan-out fast (not a full ~400-site sweep)
+    assert "--site" in args, "should restrict to a curated site list"
+    assert "GitHub" in args
 
 
 def test_sweep_classifies_timeout_as_timeout_not_error():

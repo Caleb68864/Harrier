@@ -30,6 +30,16 @@ TOOL = "username"
 SHERLOCK_BIN = "sherlock"
 MAIGRET_BIN = "maigret"
 
+# Curated high-signal sites. A full ~400-site Sherlock sweep takes ~60s and
+# self-defeats under fan-out (5 concurrent full sweeps contend and blow past the
+# budget → every candidate times out). Restricted to these, each sweep finishes
+# in ~5s, so person_sweep across many permutations stays usable. Names MUST match
+# Sherlock's site list exactly. Override per call via the ``sites`` arg.
+DEFAULT_SITES = [
+    "GitHub", "Instagram", "Reddit", "TikTok", "YouTube",
+    "Pinterest", "Twitch", "Spotify", "Telegram", "Medium",
+]
+
 
 def _parse_sherlock_file(path: str, selector: str) -> list[Finding]:
     """Parse a Sherlock per-run result file (one found profile URL per line)."""
@@ -57,7 +67,7 @@ def _parse_sherlock_file(path: str, selector: str) -> list[Finding]:
 
 
 def _run_sherlock(
-    selector: str, timeout: int, per_site_timeout: int
+    selector: str, timeout: int, per_site_timeout: int, sites: list[str]
 ) -> AdapterResult | None:
     """Run Sherlock; return an AdapterResult, or None if the binary is absent.
 
@@ -79,6 +89,8 @@ def _run_sherlock(
             "--timeout",
             str(per_site_timeout),
         ]
+        for site in sites:
+            args += ["--site", site]
         try:
             run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -151,20 +163,26 @@ def _run_maigret(selector: str, timeout: int) -> AdapterResult | None:
 
 
 def run(
-    selector: str, timeout: int = 90, per_site_timeout: int = 5, **opts
+    selector: str, timeout: int = 60, per_site_timeout: int = 5,
+    sites: list[str] | None = None, **opts
 ) -> AdapterResult:
     """Sweep a username across site-enumeration tools.
 
     Tries Sherlock first, then Maigret. If neither binary is installed, returns
     ``status="unavailable"`` with no findings. ``timeout`` bounds the whole
-    sweep; ``per_site_timeout`` is the per-request timeout passed to the tool.
+    sweep; ``per_site_timeout`` is the per-request timeout passed to the tool;
+    ``sites`` restricts the sweep (defaults to :data:`DEFAULT_SITES` so fan-out
+    stays fast — pass an explicit list to widen or narrow it).
     """
     try:
         selector = validate_selector(selector)
     except SelectorError as exc:
         return AdapterResult(status="error", tool=TOOL, reason=str(exc))
 
-    result = _run_sherlock(selector, timeout, per_site_timeout)
+    result = _run_sherlock(
+        selector, timeout, per_site_timeout,
+        DEFAULT_SITES if sites is None else sites,
+    )
     if result is None:
         result = _run_maigret(selector, timeout)
     if result is None:
