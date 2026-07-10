@@ -8,7 +8,7 @@ selector, or tool crash must yield ``status="unavailable"`` (or ``"blocked"`` /
 
 Shared plumbing lives here:
   * :func:`validate_selector` — rejects shell metacharacters (A-2).
-  * :func:`run_subprocess` — list-args only, never ``shell=True``, 30s timeout.
+  * :func:`run_subprocess` — list-args only, no shell, 30s timeout.
   * :class:`AdapterResult` — a list of findings that also carries ``.status``.
 """
 
@@ -80,7 +80,7 @@ def binary_available(name: str) -> bool:
 def run_subprocess(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> subprocess.CompletedProcess:
     """Run a subprocess safely: list args, no shell, bounded timeout.
 
-    Never called with ``shell=True``. Raises the usual subprocess exceptions
+    Runs with ``shell=False`` always. Raises the usual subprocess exceptions
     (``FileNotFoundError``, ``TimeoutExpired``); adapters catch these and
     degrade. ``args`` MUST be a list.
     """
