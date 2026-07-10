@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from harrier import assist
 from harrier import candidates as candidates_mod
 from harrier.adapters import AdapterResult
 from harrier.adapters import domain as domain_mod
@@ -198,6 +199,10 @@ def person_sweep(
         "candidates": cands,
         "suppressed": suppressed,
         "verify": verify_stats,
+        # Always hand back pre-filled links to the walled/gated free sources — the
+        # honest replacement for the blocked people-search (Phase 4).
+        "manual_assist": assist.manual_assist_links(
+            name, city=city, state=state, maiden=maiden, married=married),
     }
 
 
@@ -231,4 +236,5 @@ def register(app) -> None:
             "candidates": res["candidates"],
             "suppressed": res["suppressed"],
             "verify": res["verify"],
+            "manual_assist": res["manual_assist"],
         }
