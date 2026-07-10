@@ -25,7 +25,7 @@ def register_all(app: FastMCP) -> None:
     time (adapters degrade to `unavailable` at call time, not import time).
     """
     from harrier import assist, candidates
-    from harrier.adapters import domain, email, phone, username
+    from harrier.adapters import court, domain, email, genealogy, phone, username
     from harrier.adapters import people_search
     from harrier import sweep
 
@@ -36,6 +36,8 @@ def register_all(app: FastMCP) -> None:
         phone,
         domain,
         people_search,
+        court,
+        genealogy,
         assist,
         sweep,
     ]
