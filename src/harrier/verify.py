@@ -47,7 +47,13 @@ _WS_RE = re.compile(r"\s+")
 
 
 def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str]:
-    """Plain GET; return (status, text). status 0 on network error."""
+    """Plain GET; return (status, text). status 0 on network error.
+
+    Only http/https is fetched — a finding URL is provider-derived but untrusted,
+    so refuse file://, ftp://, gopher:// etc. (SSRF / local-file surface).
+    """
+    if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+        return 0, ""
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -63,9 +69,12 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
     """Render a page in headless Chromium (executes JS). None if unavailable/failed."""
     try:
         from playwright.sync_api import sync_playwright
+
+        from harrier.runner import run_in_thread
     except Exception:  # noqa: BLE001 — browser lib absent
         return None
-    try:
+
+    def _do() -> str:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             ctx = browser.new_context(user_agent=_UA)
@@ -77,6 +86,12 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
             finally:
                 browser.close()
             return html
+
+    try:
+        # Playwright's sync API refuses to run inside a running asyncio loop;
+        # run_in_thread offloads it off FastMCP's loop so the render fallback
+        # actually works in the live server (not just in tests/CLI).
+        return run_in_thread(_do)
     except Exception:  # noqa: BLE001
         return None
 

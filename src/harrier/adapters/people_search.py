@@ -154,7 +154,8 @@ def _fetch(sync_playwright, name, city_or_state, site):
     query = name.replace(" ", "%20")
     loc = f"&citystatezip={city_or_state.replace(' ', '%20')}" if city_or_state else ""
     url = f"https://www.{site}/results?name={query}{loc}"
-    try:
+
+    def _do():
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             ctx = browser.new_context(user_agent=_UA)
@@ -166,6 +167,12 @@ def _fetch(sync_playwright, name, city_or_state, site):
             finally:
                 browser.close()
             return status, html
+
+    try:
+        # Offload off any running asyncio loop — Playwright's sync API refuses to
+        # run inside one, which would otherwise disable the scrape in the server.
+        from harrier.runner import run_in_thread
+        return run_in_thread(_do)
     except Exception:  # noqa: BLE001
         return "ERROR", ""
 

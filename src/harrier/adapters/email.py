@@ -21,6 +21,11 @@ TOOL = "email"
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# Bounds for the holehe pass (~120 sites). Concurrency keeps it fast without
+# hammering; the budget hard-caps wall-clock so a hung site can't stall a sweep.
+_HOLEHE_CONCURRENCY = 25
+_HOLEHE_BUDGET = 45  # seconds
+
 
 def _validate_email(email: str) -> str:
     if not isinstance(email, str) or not _EMAIL_RE.match(email.strip()):
@@ -36,30 +41,40 @@ def _run_holehe(email: str) -> list[Finding]:
     except Exception:  # noqa: BLE001 — missing/incompatible import → degrade
         return []
 
+    import asyncio
+
+    # Bound the whole holehe pass: run the ~120 site checks CONCURRENTLY (the
+    # original loop awaited them one-by-one → minutes of wall-clock), cap
+    # concurrency for politeness, and hard-stop the whole thing at _HOLEHE_BUDGET
+    # so a slow/hung site can never stall the sweep.
     async def _gather() -> list[dict]:
         modules = import_submodules("holehe.modules")
         funcs = get_functions(modules)
-        out: list[dict] = []
-        async with httpx.AsyncClient() as client:
-            results: list[dict] = []
+        results: list[dict] = []
+        sem = asyncio.Semaphore(_HOLEHE_CONCURRENCY)
 
-            for func in funcs:
-                sub: list[dict] = []
+        async def _one(func, client) -> None:
+            sub: list[dict] = []
+            async with sem:
                 try:
                     await func(email, client, sub)
                 except Exception:  # noqa: BLE001 — one site failing is fine
-                    continue
-                results.extend(sub)
-            out = results
-        return out
+                    return
+            results.extend(sub)
+
+        async with httpx.AsyncClient() as client:
+            await asyncio.gather(*(_one(f, client) for f in funcs),
+                                 return_exceptions=True)
+        return results
 
     try:
         # Loop-safe: works whether called from a worker thread (person_sweep
         # fan-out) or in-loop (the direct email_recon MCP tool). A bare
         # asyncio.run here would silently no-op in the running server loop.
         from harrier.runner import run_coro_sync
-        raw = run_coro_sync(_gather)
-    except Exception:  # noqa: BLE001
+        raw = run_coro_sync(
+            lambda: asyncio.wait_for(_gather(), timeout=_HOLEHE_BUDGET))
+    except Exception:  # noqa: BLE001 — includes TimeoutError → degrade to []
         return []
 
     findings: list[Finding] = []

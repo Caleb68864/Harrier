@@ -52,6 +52,10 @@ def _gate_by_distinctiveness(
     kept: list[Finding] = []
     suppressed = 0
     for f in findings:
+        # Always attach the distinctiveness prior to any existence-tool finding —
+        # even a cross-source "high" one — so the identity signal is never lost.
+        if f.source_tool in _EXISTENCE_TOOLS and f.selector:
+            f.distinctiveness = round(distinctiveness(f.selector, anchor_surnames), 2)
         gate = (
             f.source_tool in _EXISTENCE_TOOLS
             and f.tier == "free"
@@ -60,8 +64,8 @@ def _gate_by_distinctiveness(
         if not gate:
             kept.append(f)
             continue
-        d = distinctiveness(f.selector or "", anchor_surnames)
-        f.distinctiveness = round(d, 2)
+        d = f.distinctiveness if f.distinctiveness is not None else \
+            distinctiveness(f.selector or "", anchor_surnames)
         if d < _MIN_DISTINCTIVENESS:
             suppressed += 1
             continue

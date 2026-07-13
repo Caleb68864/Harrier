@@ -54,35 +54,37 @@ async def run_jobs(
     return await asyncio.gather(*[_one(tool, fn) for tool, fn in jobs])
 
 
-def run_coro_sync(make_coro: Callable[[], Any]) -> Any:
-    """Run an async coroutine to completion from sync code, loop-safe.
+def run_in_thread(fn: Callable[[], Any]) -> Any:
+    """Run a blocking callable, offloading to a worker thread iff a loop runs.
 
-    ``make_coro`` is a zero-arg callable that returns a fresh coroutine (a
-    factory, not a coroutine object — so a retry/offload never awaits a spent
-    coroutine). Works from BOTH a plain sync caller (tests, CLI) and from inside
-    an already-running event loop: FastMCP invokes sync tool bodies while its own
-    loop is running, and a bare ``asyncio.run`` there raises "cannot be called
-    from a running event loop". When a loop is already running we offload to a
-    worker thread that owns a fresh loop; otherwise we run inline.
-
-    This is the single choke point for the sync↔async boundary — every sync
-    entrypoint that needs to drive a coroutine (the fan-out runner, the holehe
-    email check) goes through here so the event-loop hazard is fixed in one place.
+    The single choke point for the "sync code that must NOT run inside an asyncio
+    loop" hazard. FastMCP invokes sync tool bodies while its own loop is running;
+    in that context ``asyncio.run`` raises and the Playwright **sync** API raises
+    ("Sync API inside the asyncio loop"). Both work fine in a thread with no
+    running loop, so: run ``fn`` inline when no loop is running, else offload to a
+    fresh worker thread. Callers that already run in a worker thread (the fan-out
+    jobs) see no loop and pay nothing.
     """
-    def _run() -> Any:
-        return asyncio.run(make_coro())
-
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return _run()  # no loop in this thread — safe to run inline
+        return fn()  # no loop in this thread — safe to run inline
 
-    # A loop is already running in this thread (the MCP async context). Run in a
-    # separate thread so its `asyncio.run` gets a clean loop.
     import concurrent.futures
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(_run).result()
+        return pool.submit(fn).result()
+
+
+def run_coro_sync(make_coro: Callable[[], Any]) -> Any:
+    """Drive an async coroutine to completion from sync code, loop-safe.
+
+    ``make_coro`` is a zero-arg factory returning a fresh coroutine (not a
+    coroutine object — so an offload never awaits a spent one). Built on
+    :func:`run_in_thread`, so a bare ``asyncio.run`` never fires inside a
+    already-running loop. Used by the fan-out runner and the holehe email check.
+    """
+    return run_in_thread(lambda: asyncio.run(make_coro()))
 
 
 def run_jobs_sync(

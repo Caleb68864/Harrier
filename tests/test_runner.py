@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
-from harrier.runner import run_coro_sync, run_jobs_sync
+from harrier.runner import run_coro_sync, run_in_thread, run_jobs_sync
 
 
 def test_run_jobs_sync_from_plain_sync_context():
@@ -42,6 +42,21 @@ def test_run_jobs_sync_surfaces_exceptions_not_raise():
 
 async def _echo(v):
     return v
+
+
+def test_run_in_thread_inline_and_in_loop():
+    """Sync-only work (e.g. Playwright sync API) runs off a running loop."""
+    import threading
+
+    # No loop: runs inline on the calling thread.
+    assert run_in_thread(lambda: threading.current_thread().name) == \
+        threading.current_thread().name
+
+    # In-loop: must offload to a DIFFERENT thread (where sync-only libs are legal).
+    async def main():
+        return run_in_thread(lambda: threading.current_thread().name)
+
+    assert asyncio.run(main()) != threading.current_thread().name
 
 
 def test_run_coro_sync_inline_and_in_loop():
