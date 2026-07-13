@@ -1,12 +1,92 @@
-.venv/
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
-*.pyc
-.pytest_cache/
-.uv/
-dist/
-build/
+*.py[cod]
+*$py.class
 *.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+sdist/
+wheels/
+.installed.cfg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / type / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# ---------------------------------------------------------------------------
+# uv / packaging tooling caches
+# ---------------------------------------------------------------------------
+.uv/
+uv-cache/
+pip-wheel-metadata/
+
+# ---------------------------------------------------------------------------
+# Code graph artifacts (logic-dev-kit) — SQLite graph.db lives here
+# ---------------------------------------------------------------------------
+graphify-out/
+*.graph.db
+
+# ---------------------------------------------------------------------------
+# OS / editor junk
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.stackdump
+bash.exe.stackdump
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# Claude Code local config
+# ---------------------------------------------------------------------------
+.claude/
+
+# ---------------------------------------------------------------------------
+# Internal / dark-factory / Forge tooling (not part of the public repo)
+# ---------------------------------------------------------------------------
+docs/
+forge-project.json
+.forge/
+forge-*.json
+docs/specs/
+
+# ---------------------------------------------------------------------------
+# Project vaults (Obsidian and similar)
+# ---------------------------------------------------------------------------
+*.obsidian/
+.obsidian/
+vault/
+Vault/
+
+# ---------------------------------------------------------------------------
+# Local env / secrets / collected OSINT output (never commit real findings)
+# ---------------------------------------------------------------------------
 .env
-# never commit collected OSINT output
+.env.*
+!.env.example
 /out/
 *.findings.json
