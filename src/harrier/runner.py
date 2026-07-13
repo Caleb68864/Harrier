@@ -60,7 +60,28 @@ def run_jobs_sync(
     timeout: int = DEFAULT_TIMEOUT,
     jitter: float = DEFAULT_JITTER,
 ) -> list[tuple[str, Any]]:
-    """Synchronous wrapper around :func:`run_jobs` for the MCP tool boundary."""
-    return asyncio.run(
-        run_jobs(jobs, max_concurrency=max_concurrency, timeout=timeout, jitter=jitter)
-    )
+    """Synchronous wrapper around :func:`run_jobs` for the MCP tool boundary.
+
+    Must work from BOTH a plain sync caller (tests, CLI) and from inside an
+    already-running event loop — FastMCP invokes sync tools while its own loop
+    is running, and a bare ``asyncio.run`` there raises "cannot be called from a
+    running event loop". When a loop is already running we offload to a worker
+    thread that owns its own fresh loop; otherwise we run inline.
+    """
+    def _run() -> list[tuple[str, Any]]:
+        return asyncio.run(
+            run_jobs(jobs, max_concurrency=max_concurrency,
+                     timeout=timeout, jitter=jitter)
+        )
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return _run()  # no loop in this thread — safe to run inline
+
+    # A loop is already running in this thread (the MCP async context). Run the
+    # fan-out in a separate thread so its `asyncio.run` gets a clean loop.
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_run).result()
