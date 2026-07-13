@@ -25,7 +25,10 @@ DEFAULT_TIMEOUT = 30
 
 # Characters that must never reach a selector we hand to a subprocess or URL.
 # We pass args as a list (no shell), but validating anyway is defense in depth.
-_SHELL_METACHARS = set(";&|`$><\n\r\t\\\"'(){}[]!*?~")
+# Path separators (`/`, `\`) are included: a selector becomes part of a temp
+# result-file path (username.py), so `../x` would traverse outside the temp dir
+# on the read side. Usernames/domains never legitimately contain a slash.
+_SHELL_METACHARS = set(";&|`$><\n\r\t\\/\"'(){}[]!*?~")
 
 
 class SelectorError(ValueError):

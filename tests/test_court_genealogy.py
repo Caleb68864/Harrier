@@ -33,6 +33,22 @@ def test_court_empty_name():
     assert court.run("").status == "error"
 
 
+def test_court_malformed_results_shape(monkeypatch):
+    # A non-list `results` (malformed/changed API) must not crash the slice/loop.
+    monkeypatch.setattr(court, "_fetch", lambda q, t: (200, {"results": {"oops": 1}}))
+    res = court.run("Amanda Bennett")
+    assert res.status == "empty"
+    assert res == []
+
+
+def test_court_skips_non_dict_result_rows(monkeypatch):
+    monkeypatch.setattr(court, "_fetch",
+                        lambda q, t: (200, {"results": ["junk", {"caseName": "X"}]}))
+    res = court.run("Amanda Bennett")
+    assert res.status == "ok"
+    assert len(res) == 1
+
+
 def test_genealogy_unavailable_without_token(monkeypatch):
     monkeypatch.delenv("FAMILYSEARCH_ACCESS_TOKEN", raising=False)
     res = genealogy.run("Amanda", "Bennett", maiden="Wademan")

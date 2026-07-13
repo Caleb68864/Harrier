@@ -54,34 +54,46 @@ async def run_jobs(
     return await asyncio.gather(*[_one(tool, fn) for tool, fn in jobs])
 
 
-def run_jobs_sync(
-    jobs: Sequence[Job],
-    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-    timeout: int = DEFAULT_TIMEOUT,
-    jitter: float = DEFAULT_JITTER,
-) -> list[tuple[str, Any]]:
-    """Synchronous wrapper around :func:`run_jobs` for the MCP tool boundary.
+def run_coro_sync(make_coro: Callable[[], Any]) -> Any:
+    """Run an async coroutine to completion from sync code, loop-safe.
 
-    Must work from BOTH a plain sync caller (tests, CLI) and from inside an
-    already-running event loop — FastMCP invokes sync tools while its own loop
-    is running, and a bare ``asyncio.run`` there raises "cannot be called from a
-    running event loop". When a loop is already running we offload to a worker
-    thread that owns its own fresh loop; otherwise we run inline.
+    ``make_coro`` is a zero-arg callable that returns a fresh coroutine (a
+    factory, not a coroutine object — so a retry/offload never awaits a spent
+    coroutine). Works from BOTH a plain sync caller (tests, CLI) and from inside
+    an already-running event loop: FastMCP invokes sync tool bodies while its own
+    loop is running, and a bare ``asyncio.run`` there raises "cannot be called
+    from a running event loop". When a loop is already running we offload to a
+    worker thread that owns a fresh loop; otherwise we run inline.
+
+    This is the single choke point for the sync↔async boundary — every sync
+    entrypoint that needs to drive a coroutine (the fan-out runner, the holehe
+    email check) goes through here so the event-loop hazard is fixed in one place.
     """
-    def _run() -> list[tuple[str, Any]]:
-        return asyncio.run(
-            run_jobs(jobs, max_concurrency=max_concurrency,
-                     timeout=timeout, jitter=jitter)
-        )
+    def _run() -> Any:
+        return asyncio.run(make_coro())
 
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return _run()  # no loop in this thread — safe to run inline
 
-    # A loop is already running in this thread (the MCP async context). Run the
-    # fan-out in a separate thread so its `asyncio.run` gets a clean loop.
+    # A loop is already running in this thread (the MCP async context). Run in a
+    # separate thread so its `asyncio.run` gets a clean loop.
     import concurrent.futures
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(_run).result()
+
+
+def run_jobs_sync(
+    jobs: Sequence[Job],
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    timeout: int = DEFAULT_TIMEOUT,
+    jitter: float = DEFAULT_JITTER,
+) -> list[tuple[str, Any]]:
+    """Synchronous, loop-safe wrapper around :func:`run_jobs` for the MCP tool
+    boundary. See :func:`run_coro_sync` for why the loop check is required."""
+    return run_coro_sync(
+        lambda: run_jobs(jobs, max_concurrency=max_concurrency,
+                         timeout=timeout, jitter=jitter)
+    )

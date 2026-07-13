@@ -31,8 +31,6 @@ def _validate_email(email: str) -> str:
 def _run_holehe(email: str) -> list[Finding]:
     """Run holehe over its module set. Returns [] if holehe is unusable."""
     try:
-        import asyncio
-
         import httpx
         from holehe.core import import_submodules, get_functions
     except Exception:  # noqa: BLE001 — missing/incompatible import → degrade
@@ -44,7 +42,6 @@ def _run_holehe(email: str) -> list[Finding]:
         out: list[dict] = []
         async with httpx.AsyncClient() as client:
             results: list[dict] = []
-            import inspect
 
             for func in funcs:
                 sub: list[dict] = []
@@ -57,7 +54,11 @@ def _run_holehe(email: str) -> list[Finding]:
         return out
 
     try:
-        raw = asyncio.run(_gather())
+        # Loop-safe: works whether called from a worker thread (person_sweep
+        # fan-out) or in-loop (the direct email_recon MCP tool). A bare
+        # asyncio.run here would silently no-op in the running server loop.
+        from harrier.runner import run_coro_sync
+        raw = run_coro_sync(_gather)
     except Exception:  # noqa: BLE001
         return []
 

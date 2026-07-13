@@ -59,8 +59,13 @@ def run(name: str, state: str | None = None, timeout: int = 15) -> AdapterResult
         )
 
     results = data.get("results") or []
+    if not isinstance(results, list):  # malformed API shape → treat as no hits
+        return AdapterResult(status="empty", tool=TOOL,
+                             reason="unexpected CourtListener response shape")
     findings: list[Finding] = []
     for r in results[:20]:
+        if not isinstance(r, dict):
+            continue
         caption = r.get("caseName") or r.get("case_name") or "case"
         court = r.get("court") or r.get("court_id") or ""
         date = r.get("dateFiled") or r.get("date_filed") or ""

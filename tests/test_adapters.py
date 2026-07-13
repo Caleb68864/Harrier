@@ -27,6 +27,14 @@ def test_validate_selector_rejects_metachars():
             validate_selector(bad)
 
 
+def test_validate_selector_rejects_path_separators():
+    # A selector becomes part of a temp result-file path; `/` or `\` would let
+    # `../x` traverse outside the temp dir. Usernames never contain a slash.
+    for bad in ["../etc/passwd", "a/b", "a\\b", "..\\x"]:
+        with pytest.raises(SelectorError):
+            validate_selector(bad)
+
+
 def test_validate_selector_accepts_clean():
     assert validate_selector("amanda.bennett") == "amanda.bennett"
     assert validate_selector("  awademan ") == "awademan"

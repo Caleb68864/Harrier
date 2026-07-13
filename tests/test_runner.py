@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
-from harrier.runner import run_jobs_sync
+from harrier.runner import run_coro_sync, run_jobs_sync
 
 
 def test_run_jobs_sync_from_plain_sync_context():
@@ -38,3 +38,19 @@ def test_run_jobs_sync_surfaces_exceptions_not_raise():
     out = dict(run_jobs_sync([("good", lambda: 5), ("bad", boom)]))
     assert out["good"] == 5
     assert isinstance(out["bad"], ValueError)
+
+
+async def _echo(v):
+    return v
+
+
+def test_run_coro_sync_inline_and_in_loop():
+    """The shared sync↔async choke point works in both contexts (holehe uses it)."""
+    # sync context
+    assert run_coro_sync(lambda: _echo(5)) == 5
+
+    # in-loop context (the direct-tool path that would otherwise silently no-op)
+    async def main():
+        return run_coro_sync(lambda: _echo(7))
+
+    assert asyncio.run(main()) == 7
