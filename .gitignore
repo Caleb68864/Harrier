@@ -90,3 +90,6 @@ Vault/
 !.env.example
 /out/
 *.findings.json
+
+# Internal-facing project notes — not for the public repo
+CLAUDE.md
