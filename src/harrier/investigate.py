@@ -26,6 +26,7 @@ import re
 
 from harrier import assist
 from harrier import sweep as sweep_mod
+from harrier import tradecraft
 from harrier.adapters import court as court_mod
 from harrier.distinct import COMMON_SURNAMES
 from harrier.schema import Finding
@@ -123,6 +124,7 @@ def investigate(
 
     # 4) SYNTHESIZE
     findings = _dedup(all_findings)
+    tradecraft.stamp_all(findings)  # ICS 206-01 ledger on court + any unstamped
     corroborated = [f for f in findings if _is_corroborated(f)]
 
     next_steps: list[str] = []

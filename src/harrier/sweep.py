@@ -17,6 +17,7 @@ from typing import Any
 
 from harrier import assist
 from harrier import candidates as candidates_mod
+from harrier import tradecraft
 from harrier.adapters import AdapterResult
 from harrier.adapters import domain as domain_mod
 from harrier.adapters import email as email_mod
@@ -195,6 +196,10 @@ def person_sweep(
             "maiden": maiden, "married": married, "city": city, "state": state,
         }
         surfaced, verify_stats = verify_findings(surfaced, anchor)
+
+    # ICS 206-01: stamp a source ledger (url/time/method/hash) on every surfaced
+    # finding, so each is citable and validatable rather than merely asserted.
+    tradecraft.stamp_all(surfaced)
 
     sources = _merge_sources(rows)
 

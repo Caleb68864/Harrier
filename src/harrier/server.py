@@ -27,7 +27,7 @@ def register_all(app: FastMCP) -> None:
     from harrier import assist, candidates, investigate
     from harrier.adapters import court, domain, email, genealogy, phone, username
     from harrier.adapters import people_search
-    from harrier import sweep
+    from harrier import graph, sweep
 
     modules = [
         candidates,
@@ -41,6 +41,7 @@ def register_all(app: FastMCP) -> None:
         assist,
         sweep,
         investigate,
+        graph,
     ]
     for module in modules:
         register = getattr(module, "register", None)

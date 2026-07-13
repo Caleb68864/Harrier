@@ -3,7 +3,7 @@
 **A disciplined free-source OSINT collection server for LLM agents.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-79%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-92%20passing-brightgreen.svg)](#testing)
 [![Protocol](https://img.shields.io/badge/MCP-FastMCP%20stdio-8A2BE2.svg)](#registering-with-claude-code)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](#license)
 
@@ -131,12 +131,13 @@ The whole loop is bounded by `max_rounds`, and refinement only fires when genuin
 
 ## MCP tools
 
-Harrier registers eleven tools through a one-line-per-tool registration seam in `server.py`:
+Harrier registers twelve tools through a one-line-per-tool registration seam in `server.py`:
 
 | Tool | What it does |
 |------|--------------|
 | `person_sweep` | The orchestrator: permute a name → fan out across every adapter under a concurrency cap → correlate → gate by distinctiveness → optionally verify → return tier-tagged findings, a per-source status report, the candidates used, and manual-assist links. |
 | `investigate` | The bounded plan→collect→verify→refine→synthesize loop over all Harrier tools. |
+| `build_graph` | Turn correlated findings into a person-centered **entity graph** (nodes: accounts / emails / phones / cases / records; edges: provenance-stamped, distinctiveness-weighted) and export it as **GraphML** and **Neo4j Cypher** — the "map all connections" link-analysis artifact. |
 | `username_sweep` | Enumerate a username across social sites via Sherlock (primary) with a Maigret fallback. |
 | `email_recon` | Check whether an email is registered across free sources (holehe + socialscan). |
 | `phone_lookup` | Scan a phone number with PhoneInfoga. |
@@ -254,6 +255,8 @@ harrier/
 │   ├── sweep.py              # person_sweep orchestrator
 │   ├── verify.py             # fetch + Playwright-render verification stage
 │   ├── investigate.py        # bounded plan→collect→verify→refine loop
+│   ├── graph.py              # build_graph entity graph + GraphML / Cypher export
+│   ├── tradecraft.py         # ICD-203 likelihood + ICS 206-01 provenance ledger
 │   ├── assist.py             # manual-assist pre-filled deep-link generator
 │   └── adapters/             # one module per tool, uniform run() -> AdapterResult
 │       ├── __init__.py       # AdapterResult, selector validation, safe subprocess
@@ -264,14 +267,14 @@ harrier/
 │       ├── people_search.py  # headless-browser people-search (consent-gated)
 │       ├── court.py          # CourtListener / RECAP
 │       └── genealogy.py      # FamilySearch
-└── tests/                    # 79 tests
+└── tests/                    # 92 tests
 ```
 
 ---
 
 ## Engineering quality
 
-- **~79 passing tests** covering the schema, every adapter, the runner, correlation, distinctiveness, verification, the sweep, and the investigate loop.
+- **~92 passing tests** covering the schema, every adapter, the runner, correlation, distinctiveness, verification, the sweep, the investigate loop, the tradecraft layer, and the entity graph.
 - **Loop-safe sync ↔ async boundary.** FastMCP invokes sync tool bodies while its own event loop is running, which makes a bare `asyncio.run` and Playwright's sync API raise. `run_in_thread` / `run_coro_sync` are the single choke point that offloads to a worker thread only when a loop is actually running — so the server (and the render fallback) behave correctly live, not just in tests.
 - **Selector validation** rejects shell metacharacters and path-traversal separators before any selector reaches a subprocess or a temp-file path; subprocesses always run with `shell=False` and list args.
 - **Bounded, concurrent external calls** with a semaphore cap, per-job timeouts, and jitter.
@@ -280,7 +283,7 @@ harrier/
 ## Testing
 
 ```bash
-uv run pytest          # 79 passing
+uv run pytest          # 92 passing
 uv run pytest -q       # quiet
 ```
 

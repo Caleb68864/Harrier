@@ -25,6 +25,7 @@ import urllib.request
 
 from harrier.distinct import COMMON_SURNAMES
 from harrier.schema import Finding
+from harrier.tradecraft import likelihood_for_verdict
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -255,4 +256,7 @@ def verify_findings(findings: list[Finding], anchor: dict, max_verify: int = 12,
         verdict = v.get("verdict")
         if verdict in stats:
             stats[verdict] += 1
+        # Express the earned verdict as an ICD-203 estimative-probability term
+        # (distinct from confidence). Deterministic lookup; None when unassessed.
+        f.likelihood = likelihood_for_verdict(verdict, len(v.get("matched") or []))
     return findings, stats
