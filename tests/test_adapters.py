@@ -174,3 +174,28 @@ def test_domain_parses_report(tmp_path):
     findings = domain._parse_report(str(tmp_path), "example.com")
     assert len(findings) == 2
     assert {f.raw["type"] for f in findings} == {"email", "host"}
+
+
+async def test_socialscan_runs_inside_running_loop(monkeypatch):
+    # socialscan's sync_execute_queries calls asyncio.run(); invoked from a sync
+    # MCP tool body inside FastMCP's loop that raises and used to be swallowed
+    # → socialscan silently returned []. Must be offloaded like holehe/Playwright.
+    import asyncio
+    import sys
+    import types
+
+    class _Resp:
+        available = False
+        success = True
+        platform = "GITHUB"
+
+    async def _q():
+        return [_Resp()]
+
+    fake = types.ModuleType("socialscan.util")
+    fake.Platforms = types.SimpleNamespace(GITHUB="GITHUB", INSTAGRAM="INSTAGRAM")
+    fake.sync_execute_queries = lambda queries, platforms: asyncio.run(_q())
+    monkeypatch.setitem(sys.modules, "socialscan.util", fake)
+
+    found = email._run_socialscan("a@b.co")  # we are inside a running loop here
+    assert len(found) == 1 and found[0].source_tool == "socialscan"

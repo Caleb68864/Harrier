@@ -105,7 +105,12 @@ def _run_socialscan(email: str) -> list[Finding]:
         return []
 
     try:
-        results = sync_execute_queries([email], [Platforms.GITHUB, Platforms.INSTAGRAM])
+        # Loop-safe: sync_execute_queries calls asyncio.run() internally, which
+        # raises inside FastMCP's running loop (the direct email_recon tool) —
+        # offload it exactly like the holehe pass.
+        from harrier.runner import run_in_thread
+        results = run_in_thread(lambda: sync_execute_queries(
+            [email], [Platforms.GITHUB, Platforms.INSTAGRAM]))
     except Exception:  # noqa: BLE001
         return []
 
