@@ -21,6 +21,7 @@ from __future__ import annotations
 import random
 import time
 from typing import Optional
+from urllib.parse import quote, urlencode
 
 from harrier.schema import Finding
 
@@ -151,9 +152,12 @@ def run(
 
 def _fetch(sync_playwright, name, city_or_state, site):
     """Perform the headless fetch. Returns (status_code|'ERROR', html)."""
-    query = name.replace(" ", "%20")
-    loc = f"&citystatezip={city_or_state.replace(' ', '%20')}" if city_or_state else ""
-    url = f"https://www.{site}/results?name={query}{loc}"
+    params = {"name": name}
+    if city_or_state:
+        params["citystatezip"] = city_or_state
+    # Real URL-encoding (quote_via=quote keeps spaces as %20 as before) so a
+    # name/city containing &, #, + or non-ASCII can't break the query string.
+    url = f"https://www.{site}/results?" + urlencode(params, quote_via=quote)
 
     def _do():
         with sync_playwright() as p:
