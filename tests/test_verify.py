@@ -105,3 +105,31 @@ def test_verify_findings_reports_stats(monkeypatch):
                                  render=False)
     assert stats["verified"] == 2
     assert stats["false_positive"] == 2
+
+
+def test_blocked_finding_never_self_corroborates(monkeypatch):
+    # A consent-refused people_search finding echoes the search name in its own
+    # `reason`; that must not count as extracted metadata, and a blocked finding
+    # (a manual step, not a claim) must not be fetched/verified at all.
+    def _no_fetch(url, timeout=10):
+        raise AssertionError("blocked findings must not be fetched")
+    monkeypatch.setattr(verify, "_fetch", _no_fetch)
+    f = Finding(selector="Amanda Wademan", source_tool="people_search",
+                url="https://www.truepeoplesearch.com/", value=None, exists=None,
+                confidence="low", tier="blocked",
+                reason="Blocked. Manual step: search 'Amanda Wademan' by hand.")
+    out, stats = verify_findings([f], ANCHOR, render=False)
+    assert out[0].confidence == "low"
+    assert out[0].exists is None
+    assert out[0].likelihood is None
+    assert "verify" not in out[0].raw
+    assert stats["verified"] == 0
+
+
+def test_precheck_ignores_reason_text(monkeypatch):
+    # only tool-extracted metadata (`raw.ids`) may pre-corroborate — not free text
+    monkeypatch.setattr(verify, "_fetch", lambda url, timeout=10: (404, ""))
+    f = Finding(selector="x", source_tool="sherlock", url="https://s/x", value="x",
+                exists=True, confidence="low", reason="found Wademan mention")
+    verify_finding(f, ANCHOR, render_fn=None)
+    assert f.raw["verify"]["verdict"] == "false_positive"

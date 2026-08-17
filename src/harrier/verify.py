@@ -174,14 +174,17 @@ def _classify_reachable(finding: Finding, anchor: dict, status: int, body: str,
 
 
 def _metadata_text(finding: Finding) -> str:
-    """Text from tool-extracted metadata (e.g. Maigret `ids`) for the pre-check."""
-    bits: list[str] = []
+    """Text from tool-extracted metadata (e.g. Maigret `ids`) for the pre-check.
+
+    Only structured metadata counts. ``finding.reason`` is deliberately excluded:
+    it is free text that often echoes the *query* (a blocked people-search
+    finding's manual step quotes the searched name), which would let a finding
+    corroborate itself.
+    """
     ids = (finding.raw or {}).get("ids")
-    if isinstance(ids, dict):
-        bits.extend(str(v) for v in ids.values())
-    if finding.reason:
-        bits.append(finding.reason)
-    return " ".join(bits).lower()
+    if not isinstance(ids, dict):
+        return ""
+    return " ".join(str(v) for v in ids.values()).lower()
 
 
 def _precheck_metadata(finding: Finding, anchor: dict) -> bool:
@@ -245,7 +248,9 @@ def verify_findings(findings: list[Finding], anchor: dict, max_verify: int = 12,
     render_fn = _render_page if render else None
     budget = max_verify
     for f in findings:
-        if budget <= 0 or not f.url:
+        # A blocked finding is a manual step, not a claim (mirrors correlate's
+        # pass-through): its URL is a site root, so there is nothing to verify.
+        if budget <= 0 or not f.url or f.tier == "blocked":
             continue
         budget -= 1
         verify_finding(f, anchor, timeout=timeout, render_fn=render_fn)
