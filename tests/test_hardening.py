@@ -287,3 +287,20 @@ def test_graphml_strips_xml_illegal_control_chars():
     f = Finding(selector="a", source_tool="sherlock", value="bad\x00\x0bname\x1f")
     xml_text = to_graphml(build_graph([f], {"name": "Amanda\x07 Bennett"}))
     xml.dom.minidom.parseString(xml_text)  # raises on illegal chars
+
+
+# --- logging: degraded jobs are logged with tool + cause ----------------------
+
+def test_log_degraded_jobs(caplog):
+    import logging
+
+    from harrier import sweep
+
+    rows = [("username", "error", []), ("email", "ok", []), ("phone", "unavailable", [])]
+    reasons = ["sherlock failed (exit 2)", None, "phoneinfoga binary not found"]
+    with caplog.at_level(logging.WARNING, logger="harrier.sweep"):
+        sweep._log_degraded(rows, reasons)
+    text = caplog.text
+    assert "tool=username status=error" in text and "exit 2" in text
+    assert "tool=phone status=unavailable" in text
+    assert "tool=email" not in text

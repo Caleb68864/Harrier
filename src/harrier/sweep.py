@@ -13,6 +13,7 @@ sweep returns an empty ``findings`` list with all ``sources[]`` marked
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from harrier import assist
@@ -102,6 +103,21 @@ def _normalize(tool: str, result: Any) -> tuple[str, str, list[Finding]]:
 
 
 _MAX_REASONS_PER_TOOL = 3
+
+# Stdio MCP: stdout is the protocol channel, so diagnostics go through logging
+# (stderr) only — never print().
+log = logging.getLogger("harrier.sweep")
+
+_HEALTHY = {"ok", "empty", "blocked"}
+
+
+def _log_degraded(rows: list[tuple[str, str, list[Finding]]],
+                  reasons: list[str | None]) -> None:
+    """Log one structured line per degraded job (tool, status, cause)."""
+    for (tool, status, _), why in zip(rows, reasons):
+        if status not in _HEALTHY:
+            log.warning("sweep job degraded tool=%s status=%s reason=%s",
+                        tool, status, why or "unspecified")
 
 
 def _reason(result: Any) -> str | None:
@@ -213,6 +229,7 @@ def person_sweep(
     raw = run_jobs_sync(jobs, max_concurrency=max_concurrency, timeout=105)
     rows = [_normalize(tool, result) for tool, result in raw]
     reasons = [_reason(result) for _, result in raw]
+    _log_degraded(rows, reasons)
 
     # 4) Merge + correlate.
     all_findings: list[Finding] = []
