@@ -107,8 +107,9 @@ def manual_assist_links(
 
     # --- Business / entity ----------------------------------------------------
     oc = f"https://opencorporates.com/companies?q={quote_plus(name)}"
-    if state:
-        oc += "&jurisdiction_code=us_" + state.lower()
+    st = (state or "").strip()
+    if len(st) == 2 and st.isalpha():  # OpenCorporates wants us_<2-letter code>
+        oc += "&jurisdiction_code=us_" + st.lower()
     add("business", "OpenCorporates", oc, True,
         "Person → registered entity → address / registered agent.")
     if state:
@@ -118,8 +119,10 @@ def manual_assist_links(
 
     # --- Public records: property, unclaimed property -------------------------
     add("records", "County assessor / GIS property",
-        _g(f"{loc or state} county assessor property search"), True,
-        "Free, openly queryable; places the subject at an address.")
+        _g(f"{loc} county assessor property search" if loc
+           else "county assessor property search"), True,
+        "Free, openly queryable; places the subject at an address."
+        + ("" if loc else " Add the subject's county/state to the search."))
     add("records", "Unclaimed property (MissingMoney)",
         "https://www.missingmoney.com/en/", False,
         f"Free/government-backed. Open and search '{name}' — corroborates "

@@ -242,3 +242,23 @@ def test_investigate_clamps_max_rounds(monkeypatch):
                         lambda *a, **k: AdapterResult(status="empty", tool="courtlistener"))
     res = inv.investigate("Amanda Bennett", max_rounds=10_000)
     assert res["rounds_run"] <= inv.MAX_ROUNDS
+
+
+# --- assist: no "None" in queries; jurisdiction only from a 2-letter code ------
+
+def test_assist_no_none_in_links_without_location():
+    from harrier.assist import manual_assist_links
+
+    links = manual_assist_links("Amanda Bennett")
+    assert all("None" not in (l["url"] + l["note"]) for l in links)
+
+
+def test_assist_opencorporates_jurisdiction_is_valid():
+    from harrier.assist import manual_assist_links
+
+    def oc(state):
+        return next(l["url"] for l in manual_assist_links("Amanda Bennett", state=state)
+                    if l["site"] == "OpenCorporates")
+
+    assert oc("NE").endswith("&jurisdiction_code=us_ne")
+    assert "jurisdiction_code" not in oc("New York")  # no space / bogus code
