@@ -51,6 +51,11 @@ def validate_selector(selector: str) -> str:
         raise SelectorError(f"selector contains disallowed characters: {selector!r}")
     if any(ch.isspace() for ch in s):
         raise SelectorError("selector contains whitespace")
+    if s.startswith("-"):
+        # The selector is a positional argv entry; a leading dash would be parsed
+        # by sherlock/maigret/theHarvester as an OPTION (argument injection,
+        # e.g. ``--output=x``) rather than a username/domain.
+        raise SelectorError(f"selector may not start with '-': {selector!r}")
     return s
 
 
