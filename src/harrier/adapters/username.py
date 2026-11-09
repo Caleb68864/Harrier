@@ -21,6 +21,7 @@ from harrier.adapters import (
     AdapterResult,
     SelectorError,
     binary_available,
+    exit_failure_reason,
     run_subprocess,
     validate_selector,
 )
@@ -92,7 +93,7 @@ def _run_sherlock(
         for site in sites:
             args += ["--site", site]
         try:
-            run_subprocess(args, timeout=timeout)
+            proc = run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
             return AdapterResult(status="unavailable", tool="sherlock",
                                  reason="sherlock timed out")
@@ -100,7 +101,15 @@ def _run_sherlock(
             return None
         result_file = os.path.join(tmp, f"{selector}.txt")
         findings = _parse_sherlock_file(result_file, selector)
-    return AdapterResult(findings, status="ok", tool="sherlock")
+    return _finish(findings, proc, "sherlock")
+
+
+def _finish(findings: list[Finding], proc, tool: str) -> AdapterResult:
+    """A non-zero exit with no results is a tool failure, not "nothing found"."""
+    failure = exit_failure_reason(tool, proc)
+    if failure and not findings:
+        return AdapterResult(status="error", tool=tool, reason=failure)
+    return AdapterResult(findings, status="ok", tool=tool, reason=failure)
 
 
 def _parse_maigret_json(path: str, selector: str) -> list[Finding]:
@@ -153,7 +162,7 @@ def _run_maigret(selector: str, timeout: int) -> AdapterResult | None:
         args = [MAIGRET_BIN, selector, "--json", "simple", "--folderoutput", tmp,
                 "--top-sites", "50", "--timeout", "5"]
         try:
-            run_subprocess(args, timeout=timeout)
+            proc = run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
             return AdapterResult(status="unavailable", tool="maigret",
                                  reason="maigret timed out")
@@ -169,7 +178,7 @@ def _run_maigret(selector: str, timeout: int) -> AdapterResult | None:
                     findings = _parse_maigret_json(os.path.join(tmp, name), selector)
                     if findings:
                         break
-    return AdapterResult(findings, status="ok", tool="maigret")
+    return _finish(findings, proc, "maigret")
 
 
 def run(

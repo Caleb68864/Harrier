@@ -20,6 +20,7 @@ from harrier.adapters import (
     AdapterResult,
     SelectorError,
     binary_available,
+    exit_failure_reason,
     run_subprocess,
     validate_selector,
 )
@@ -55,7 +56,7 @@ def run(selector: str, timeout: int = 30, sources: str = "all", **opts) -> Adapt
         out_base = os.path.join(tmp, "report")
         args = [HARVESTER_BIN, "-d", domain, "-b", sources, "-f", out_base]
         try:
-            run_subprocess(args, timeout=timeout)
+            proc = run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
             return AdapterResult(status="unavailable", tool=TOOL,
                                  reason="theHarvester timed out")
@@ -63,7 +64,10 @@ def run(selector: str, timeout: int = 30, sources: str = "all", **opts) -> Adapt
             return AdapterResult(status="unavailable", tool=TOOL,
                                  reason="theHarvester not runnable")
         findings = _parse_report(tmp, domain)
-    return AdapterResult(findings, status="ok", tool=TOOL)
+    failure = exit_failure_reason("theHarvester", proc)
+    if failure and not findings:  # partial report on non-zero exit still counts
+        return AdapterResult(status="error", tool=TOOL, reason=failure)
+    return AdapterResult(findings, status="ok", tool=TOOL, reason=failure)
 
 
 def _parse_report(folder: str, domain: str) -> list[Finding]:

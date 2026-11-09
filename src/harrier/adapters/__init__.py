@@ -122,10 +122,11 @@ def exit_failure_reason(tool: str, proc: subprocess.CompletedProcess,
     Includes the exit code and the tail of stderr (or stdout) so the calling
     agent can tell "tool ran, found nothing" apart from "tool failed".
     """
-    if proc.returncode == 0:
+    rc = getattr(proc, "returncode", 0)
+    if not rc:
         return None
-    detail = (proc.stderr or proc.stdout or "").strip()
+    detail = (getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "").strip()
     if len(detail) > limit:
         detail = "..." + detail[-limit:]
-    msg = f"{tool} failed (exit {proc.returncode})"
+    msg = f"{tool} failed (exit {rc})"
     return f"{msg}: {detail}" if detail else msg

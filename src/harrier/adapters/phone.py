@@ -20,6 +20,7 @@ from harrier.adapters import (
     SelectorError,
     as_text,
     binary_available,
+    exit_failure_reason,
     run_subprocess,
 )
 from harrier.schema import Finding
@@ -64,6 +65,10 @@ def run(selector: str, timeout: int = 30, **opts) -> AdapterResult:
     except (FileNotFoundError, OSError):
         return AdapterResult(status="unavailable", tool=TOOL,
                              reason="phoneinfoga not runnable")
+
+    failure = exit_failure_reason("phoneinfoga", proc)
+    if failure:  # stdout of a failed scan is an error message, not a result
+        return AdapterResult(status="error", tool=TOOL, reason=failure)
 
     findings = _parse(proc.stdout, number)
     return AdapterResult(findings, status="ok", tool=TOOL)
