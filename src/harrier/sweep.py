@@ -101,12 +101,46 @@ def _normalize(tool: str, result: Any) -> tuple[str, str, list[Finding]]:
     return tool, "unknown", []
 
 
-def _merge_sources(rows: list[tuple[str, str, list[Finding]]]) -> list[dict]:
-    """Aggregate per-tool status + finding counts for the ``sources[]`` report."""
+_MAX_REASONS_PER_TOOL = 3
+
+
+def _reason(result: Any) -> str | None:
+    """Why a job degraded, in a form the calling agent can act on.
+
+    Exceptions keep their type (``TimeoutError``, ``KeyError: 'x'``) instead of
+    collapsing to a bare ``"error"``; adapter results pass their ``reason``.
+    """
+    if isinstance(result, (asyncio.TimeoutError, TimeoutError)):
+        return "job exceeded the runner time budget"
+    if isinstance(result, Exception):
+        msg = str(result).strip()
+        name = type(result).__name__
+        return f"{name}: {msg[:300]}" if msg else name
+    if isinstance(result, AdapterResult):
+        return result.reason
+    if isinstance(result, dict):
+        r = result.get("reason")
+        return r if isinstance(r, str) else None
+    return None
+
+
+def _merge_sources(rows: list[tuple[str, str, list[Finding]]],
+                   reasons: list[str | None] | None = None) -> list[dict]:
+    """Aggregate per-tool status + finding counts for the ``sources[]`` report.
+
+    When ``reasons`` (parallel to ``rows``) is given, each tool entry gains a
+    ``reasons`` list of up to a few distinct degradation causes, so the agent
+    sees *why* a source came back empty/error/unavailable.
+    """
     agg: dict[str, dict] = {}
-    for tool, status, findings in rows:
+    reasons = reasons or [None] * len(rows)
+    for (tool, status, findings), why in zip(rows, reasons):
         entry = agg.setdefault(tool, {"tool": tool, "status": status, "count": 0})
         entry["count"] += len(findings)
+        if why:
+            bucket = entry.setdefault("reasons", [])
+            if why not in bucket and len(bucket) < _MAX_REASONS_PER_TOOL:
+                bucket.append(why)
         # Prefer a positive/informative status if any job for the tool got one.
         rank = {"ok": 3, "empty": 2, "blocked": 1}
         if rank.get(status, 0) > rank.get(entry["status"], 0):
@@ -178,6 +212,7 @@ def person_sweep(
     #    (username overall budget = 90s, so the runner allows 105s).
     raw = run_jobs_sync(jobs, max_concurrency=max_concurrency, timeout=105)
     rows = [_normalize(tool, result) for tool, result in raw]
+    reasons = [_reason(result) for _, result in raw]
 
     # 4) Merge + correlate.
     all_findings: list[Finding] = []
@@ -201,7 +236,7 @@ def person_sweep(
     # finding, so each is citable and validatable rather than merely asserted.
     tradecraft.stamp_all(surfaced)
 
-    sources = _merge_sources(rows)
+    sources = _merge_sources(rows, reasons)
 
     return {
         "findings": surfaced,

@@ -65,3 +65,28 @@ def test_phone_json_non_string_carrier_does_not_raise():
     res = phone._parse(out, "+15555550100")
     assert len(res) == 1
     assert isinstance(res[0].value, str)
+
+
+# --- sweep sources[] carries the cause of degradation -------------------------
+
+def test_sweep_sources_carry_exception_reason():
+    from harrier import sweep
+    from harrier.adapters import AdapterResult
+
+    raw = [("username", KeyError("site_list")),
+           ("username", AdapterResult(status="error", tool="sherlock",
+                                      reason="sherlock failed (exit 2)")),
+           ("court", TimeoutError())]
+    rows = [sweep._normalize(t, r) for t, r in raw]
+    reasons = [sweep._reason(r) for _, r in raw]
+    by_tool = {s["tool"]: s for s in sweep._merge_sources(rows, reasons)}
+    assert "KeyError: 'site_list'" in by_tool["username"]["reasons"]
+    assert "sherlock failed (exit 2)" in by_tool["username"]["reasons"]
+    assert by_tool["court"]["status"] == "timeout"
+    assert by_tool["court"]["reasons"]
+
+
+def test_merge_sources_backward_compatible_without_reasons():
+    from harrier import sweep
+    out = sweep._merge_sources([("email", "ok", [])])
+    assert out == [{"tool": "email", "status": "ok", "count": 0}]
