@@ -146,3 +146,42 @@ def test_holehe_import_failure_records_reason(monkeypatch):
     errors: list[str] = []
     assert email._run_holehe("a@example.com", errors) == []
     assert errors and "holehe import failed" in errors[0]
+
+
+# --- verify: scheme guard on the render path; non-2xx is never "reachable" ---
+
+def test_verify_never_renders_non_http_url(monkeypatch):
+    from harrier import verify
+    from harrier.schema import Finding
+
+    rendered: list[str] = []
+
+    def render(url):
+        rendered.append(url)
+        return "<html><title>wademan</title></html>"
+
+    for bad in ("file:///etc/passwd", "ftp://example.com/x", "javascript:alert(1)"):
+        f = Finding(selector="amandawademan", source_tool="sherlock", url=bad,
+                    exists=True)
+        verify.verify_finding(f, {"maiden": "Wademan"}, render_fn=render)
+        assert f.raw["verify"]["verdict"] == "unverifiable"
+        assert f.confidence == "low"
+    assert rendered == []
+
+    # _render_page itself must refuse too (defense in depth).
+    assert verify._render_page("file:///etc/passwd") is None
+
+
+def test_verify_server_error_is_unverifiable_not_reachable(monkeypatch):
+    from harrier import verify
+    from harrier.schema import Finding
+
+    for code in (500, 502, 504, 400, 408):
+        monkeypatch.setattr(verify, "_fetch", lambda url, timeout=10, c=code: (c, ""))
+        f = Finding(selector="amandawademan", source_tool="sherlock",
+                    url="https://example.com/amandawademan", exists=True)
+        verify.verify_finding(f, {"maiden": "Wademan"}, render_fn=None)
+        v = f.raw["verify"]
+        assert v["verdict"] == "unverifiable", code
+        assert v["status"] == code
+        assert "200" not in f.reason

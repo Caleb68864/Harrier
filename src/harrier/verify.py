@@ -47,13 +47,18 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 
 
+def _is_http_url(url) -> bool:
+    """Only http(s) URLs are ever fetched or rendered (SSRF / local-file guard)."""
+    return isinstance(url, str) and url.lower().startswith(("http://", "https://"))
+
+
 def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str]:
     """Plain GET; return (status, text). status 0 on network error.
 
     Only http/https is fetched — a finding URL is provider-derived but untrusted,
     so refuse file://, ftp://, gopher:// etc. (SSRF / local-file surface).
     """
-    if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+    if not _is_http_url(url):
         return 0, ""
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     try:
@@ -67,7 +72,12 @@ def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str]:
 
 
 def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
-    """Render a page in headless Chromium (executes JS). None if unavailable/failed."""
+    """Render a page in headless Chromium (executes JS). None if unavailable/failed.
+
+    Refuses non-http(s) URLs: Chromium would happily open ``file://`` paths.
+    """
+    if not _is_http_url(url):
+        return None
     try:
         from playwright.sync_api import sync_playwright
 
@@ -213,8 +223,15 @@ def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT
         return finding
     if not finding.url:
         return finding
-    status, body = _fetch(finding.url, timeout)
     raw = dict(finding.raw)
+    if not _is_http_url(finding.url):
+        # Never fetch OR render a non-http(s) URL (file://, ftp://, javascript:).
+        raw["verify"] = {"status": 0, "verdict": "unverifiable", "rendered": False}
+        finding.reason = (finding.reason + " · " if finding.reason else "") + \
+            "verify: non-http(s) URL refused — confirm manually"
+        finding.raw = raw
+        return finding
+    status, body = _fetch(finding.url, timeout)
 
     if status in _DEAD_STATUSES:
         finding.exists = False
@@ -224,7 +241,9 @@ def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT
         finding.raw = raw
         return finding
 
-    if status in _UNVERIFIABLE_STATUSES:
+    if status in _UNVERIFIABLE_STATUSES or not 200 <= status < 300:
+        # Anything other than a 2xx (5xx, 400, 408, ...) carries no readable
+        # profile — never classify an error page as "reachable".
         raw["verify"] = {"status": status, "verdict": "unverifiable", "rendered": False}
         finding.reason = (finding.reason + " · " if finding.reason else "") + \
             f"verify: unreachable (HTTP {status}) — confirm manually"
