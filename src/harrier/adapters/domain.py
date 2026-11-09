@@ -29,6 +29,36 @@ from harrier.schema import Finding
 TOOL = "domain"
 HARVESTER_BIN = "theHarvester"
 
+# Free, keyless passive sources only (legal constraint: free public sources).
+# ``-b all`` would include API-key / paid-tier modules (shodan, hunter, censys,
+# securitytrails, ...) and search-engine scrapers; pin an explicit allowlist so
+# the constraint holds by construction. Certificate-transparency + passive-DNS
+# sources that answer without a key. Re-check against the installed version.
+FREE_SOURCES = (
+    "anubis", "certspotter", "crtsh", "hackertarget", "otx", "rapiddns",
+    "threatminer", "urlscan",
+)
+
+
+def _validate_sources(sources) -> str:
+    """Return a comma-joined subset of FREE_SOURCES, or raise SelectorError.
+
+    ``None`` means the full free allowlist. Anything outside it (including
+    ``"all"``) is refused rather than silently widened.
+    """
+    if sources is None:
+        return ",".join(FREE_SOURCES)
+    if isinstance(sources, str):
+        items = [s.strip().lower() for s in sources.split(",") if s.strip()]
+    else:
+        items = [str(s).strip().lower() for s in sources if str(s).strip()]
+    bad = [s for s in items if s not in FREE_SOURCES]
+    if bad or not items:
+        raise SelectorError(
+            f"theHarvester sources not allowed: {bad or sources!r}; "
+            f"use a subset of the free keyless list: {', '.join(FREE_SOURCES)}")
+    return ",".join(dict.fromkeys(items))
+
 
 def _validate_domain(selector: str) -> str:
     s = validate_selector(selector)  # rejects shell metacharacters
@@ -37,10 +67,11 @@ def _validate_domain(selector: str) -> str:
     return s.lower()
 
 
-def run(selector: str, timeout: int = 30, sources: str = "all", **opts) -> AdapterResult:
-    """Harvest a domain with theHarvester if available."""
+def run(selector: str, timeout: int = 30, sources=None, **opts) -> AdapterResult:
+    """Harvest a domain with theHarvester (free keyless sources only)."""
     try:
         domain = _validate_domain(selector)
+        source_arg = _validate_sources(sources)
     except SelectorError as exc:
         return AdapterResult(status="error", tool=TOOL, reason=str(exc))
 
@@ -54,7 +85,7 @@ def run(selector: str, timeout: int = 30, sources: str = "all", **opts) -> Adapt
 
     with tempfile.TemporaryDirectory(prefix="harrier_harvester_") as tmp:
         out_base = os.path.join(tmp, "report")
-        args = [HARVESTER_BIN, "-d", domain, "-b", sources, "-f", out_base]
+        args = [HARVESTER_BIN, "-d", domain, "-b", source_arg, "-f", out_base]
         try:
             proc = run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
