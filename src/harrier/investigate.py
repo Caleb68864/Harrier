@@ -32,6 +32,11 @@ from harrier.distinct import COMMON_SURNAMES
 from harrier.schema import Finding
 
 
+# Hard ceiling on refinement rounds: each round is a full person_sweep (dozens
+# of outbound requests), so a caller-supplied max_rounds must not be unbounded.
+MAX_ROUNDS = 5
+
+
 def _known_tokens(name: str, state: str | None, city: str | None,
                   maiden: str | None, married: str | None,
                   nicknames: list[str]) -> set[str]:
@@ -97,8 +102,9 @@ def investigate(
     tool_calls: list[str] = []
     discovered: list[str] = []
     rounds_run = 0
+    max_rounds = min(max(1, int(max_rounds or 1)), MAX_ROUNDS)
 
-    for _ in range(max(1, max_rounds)):
+    for _ in range(max_rounds):
         rounds_run += 1
         # 1-2) COLLECT + VERIFY
         sweep = sweep_mod.person_sweep(

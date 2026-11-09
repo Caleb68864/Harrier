@@ -185,3 +185,60 @@ def test_verify_server_error_is_unverifiable_not_reachable(monkeypatch):
         assert v["verdict"] == "unverifiable", code
         assert v["status"] == code
         assert "200" not in f.reason
+
+
+# --- input validation ---------------------------------------------------------
+
+def test_validate_selector_rejects_leading_dash_option_injection():
+    import pytest
+
+    from harrier.adapters import SelectorError, validate_selector
+
+    for bad in ("--output=evil.txt", "-h", "--version", " -x"):
+        with pytest.raises(SelectorError):
+            validate_selector(bad)
+    assert validate_selector("a-b") == "a-b"  # interior dashes are fine
+
+
+def test_username_and_domain_refuse_option_like_selectors(monkeypatch):
+    from harrier.adapters import domain, username
+
+    called = []
+    monkeypatch.setattr(username, "binary_available", lambda n: True)
+    monkeypatch.setattr(username, "run_subprocess", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(domain, "binary_available", lambda n: True)
+    monkeypatch.setattr(domain, "run_subprocess", lambda *a, **k: called.append(a))
+    assert username.run("--output=x.txt").status == "error"
+    assert domain.run("--filename=x.json").status == "error"
+    assert called == []
+
+
+def test_generate_candidates_respects_zero_and_negative_max():
+    from harrier.candidates import generate_candidates
+
+    assert generate_candidates("amanda", "bennett", max=0) == []
+    assert generate_candidates("amanda", "bennett", max=-3) == []
+    assert len(generate_candidates("amanda", "bennett", max=1)) == 1
+
+
+def test_investigate_clamps_max_rounds(monkeypatch):
+    from harrier import investigate as inv
+    from harrier.adapters import AdapterResult
+    from harrier.schema import Finding
+
+    n = {"i": 0}
+
+    def fake_sweep(name, **kw):
+        # Every round "discovers" a brand-new distinctive surname.
+        n["i"] += 1
+        tok = "zzq" + "abcdefghijklmnopqrstuvwxyz"[n["i"] % 26] * 6
+        f = Finding(selector="x", source_tool="maigret", url=f"https://e.com/{n['i']}",
+                    exists=True, raw={"ids": {"fullname": tok},
+                                      "verify": {"verdict": "corroborated"}})
+        return {"findings": [f], "sources": []}
+
+    monkeypatch.setattr(inv.sweep_mod, "person_sweep", fake_sweep)
+    monkeypatch.setattr(inv.court_mod, "run",
+                        lambda *a, **k: AdapterResult(status="empty", tool="courtlistener"))
+    res = inv.investigate("Amanda Bennett", max_rounds=10_000)
+    assert res["rounds_run"] <= inv.MAX_ROUNDS

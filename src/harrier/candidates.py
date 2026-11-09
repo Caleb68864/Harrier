@@ -66,7 +66,7 @@ def generate_candidates(
     """
     first = _clean(first)
     last = _clean(last)
-    if not first or not last:
+    if not first or not last or max <= 0:
         return []
 
     # Alternate first names: the given name plus any nicknames.
