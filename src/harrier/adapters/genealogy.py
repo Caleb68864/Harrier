@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlencode
 
-from harrier.adapters import AdapterResult, as_text
+from harrier.adapters import AdapterResult, as_text, clamp_timeout
 from harrier.schema import Finding
 
 TOOL = "familysearch"
@@ -52,7 +52,7 @@ def run(first: str, last: str, maiden: str | None = None,
         headers={"User-Agent": _UA, "Accept": "application/json",
                  "Authorization": f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=clamp_timeout(timeout)) as resp:
             data = json.load(resp)
     except urllib.error.HTTPError as exc:
         return AdapterResult(status="unavailable", tool=TOOL,

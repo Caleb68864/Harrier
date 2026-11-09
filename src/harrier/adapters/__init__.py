@@ -22,6 +22,19 @@ from harrier.schema import Finding
 
 # Default per-adapter subprocess timeout (seconds), per spec.
 DEFAULT_TIMEOUT = 30
+# Bounds for caller-supplied timeouts: <=0 would "time out" instantly (a fake
+# unavailable), and an unbounded value could hang a direct MCP tool call.
+MIN_TIMEOUT = 1
+MAX_TIMEOUT = 300
+
+
+def clamp_timeout(timeout, default: int = DEFAULT_TIMEOUT) -> int:
+    """Coerce a caller-supplied timeout to an int in [MIN_TIMEOUT, MAX_TIMEOUT]."""
+    try:
+        t = int(timeout)
+    except (TypeError, ValueError):
+        t = default
+    return max(MIN_TIMEOUT, min(MAX_TIMEOUT, t))
 
 # Characters that must never reach a selector we hand to a subprocess or URL.
 # We pass args as a list (no shell), but validating anyway is defense in depth.
@@ -98,7 +111,7 @@ def run_subprocess(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> subproces
         args,
         capture_output=True,
         text=True,
-        timeout=timeout,
+        timeout=clamp_timeout(timeout),
         shell=False,
         check=False,
     )

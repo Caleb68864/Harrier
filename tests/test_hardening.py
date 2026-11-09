@@ -304,3 +304,45 @@ def test_log_degraded_jobs(caplog):
     assert "tool=username status=error" in text and "exit 2" in text
     assert "tool=phone status=unavailable" in text
     assert "tool=email" not in text
+
+
+# --- timeouts are clamped to a sane range -------------------------------------
+
+def test_clamp_timeout():
+    from harrier.adapters import MAX_TIMEOUT, clamp_timeout
+
+    assert clamp_timeout(0) == 1
+    assert clamp_timeout(-5) == 1
+    assert clamp_timeout(10**9) == MAX_TIMEOUT
+    assert clamp_timeout("junk") == 30
+    assert clamp_timeout(None) == 30
+    assert clamp_timeout(45) == 45
+
+
+def test_run_subprocess_clamps_timeout(monkeypatch):
+    import harrier.adapters as adapters
+
+    seen = {}
+
+    def fake_run(args, **kw):
+        seen["timeout"] = kw["timeout"]
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(adapters.subprocess, "run", fake_run)
+    adapters.run_subprocess(["true"], timeout=0)
+    assert seen["timeout"] == 1
+    adapters.run_subprocess(["true"], timeout=99999)
+    assert seen["timeout"] == adapters.MAX_TIMEOUT
+
+
+def test_court_clamps_timeout(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["timeout"] = timeout
+        raise OSError("offline")
+
+    monkeypatch.setattr(court.urllib.request, "urlopen", fake_urlopen)
+    res = court.run("Amanda Bennett", timeout=-3)
+    assert res.status == "unavailable"
+    assert seen["timeout"] == 1

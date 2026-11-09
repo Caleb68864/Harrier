@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlencode
 
-from harrier.adapters import AdapterResult, as_text
+from harrier.adapters import AdapterResult, as_text, clamp_timeout
 from harrier.schema import Finding
 
 TOOL = "courtlistener"
@@ -34,7 +34,7 @@ def _fetch(query: str, timeout: int) -> tuple[int, dict | None]:
     if token:
         req.add_header("Authorization", f"Token {token}")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=clamp_timeout(timeout)) as resp:
             return getattr(resp, "status", 200) or 200, json.load(resp)
     except urllib.error.HTTPError as exc:
         return exc.code, None
