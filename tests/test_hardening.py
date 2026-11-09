@@ -346,3 +346,13 @@ def test_court_clamps_timeout(monkeypatch):
     res = court.run("Amanda Bennett", timeout=-3)
     assert res.status == "unavailable"
     assert seen["timeout"] == 1
+
+
+def test_court_unavailable_reasons_are_actionable(monkeypatch):
+    for status, needle in ((0, "network error"), (429, "rate-limited"),
+                           (403, "COURTLISTENER_TOKEN"), (500, "HTTP 500")):
+        monkeypatch.setattr(court, "_fetch", lambda q, t, s=status: (s, None))
+        res = court.run("Amanda Bennett")
+        assert res.status == "unavailable"
+        assert needle in res.reason
+        assert "HTTP 0" not in res.reason

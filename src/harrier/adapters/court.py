@@ -52,9 +52,17 @@ def run(name: str, state: str | None = None, timeout: int = 15) -> AdapterResult
 
     status, data = _fetch(f'"{name}"', timeout)
     if data is None:
+        if status == 429:
+            cause = "rate-limited (HTTP 429); retry later or set COURTLISTENER_TOKEN"
+        elif status in (401, 403):
+            cause = f"HTTP {status}; check COURTLISTENER_TOKEN"
+        elif status:
+            cause = f"HTTP {status}"
+        else:  # _fetch reports 0 for network error / timeout / bad JSON
+            cause = "network error, timeout, or non-JSON response"
         return AdapterResult(
             status="unavailable", tool=TOOL,
-            reason=f"CourtListener unreachable (HTTP {status}); use the manual_assist "
+            reason=f"CourtListener unreachable ({cause}); use the manual_assist "
                    "CourtListener link.",
         )
 
