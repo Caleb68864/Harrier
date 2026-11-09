@@ -356,3 +356,36 @@ def test_court_unavailable_reasons_are_actionable(monkeypatch):
         assert res.status == "unavailable"
         assert needle in res.reason
         assert "HTTP 0" not in res.reason
+
+
+# --- politeness cap + engine validation ---------------------------------------
+
+def test_runner_caps_concurrency():
+    import threading
+    import time
+
+    from harrier import runner
+
+    live = {"now": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def job():
+        with lock:
+            live["now"] += 1
+            live["peak"] = max(live["peak"], live["now"])
+        time.sleep(0.05)
+        with lock:
+            live["now"] -= 1
+        return 1
+
+    jobs = [(f"t{i}", job) for i in range(40)]
+    runner.run_jobs_sync(jobs, max_concurrency=1000, jitter=0)
+    assert live["peak"] <= runner.MAX_CONCURRENCY
+
+
+def test_username_unknown_engine_is_error():
+    from harrier.adapters import username
+
+    res = username.run("amandab", engine="sherlok")
+    assert res.status == "error"
+    assert "sherlock" in res.reason and "maigret" in res.reason

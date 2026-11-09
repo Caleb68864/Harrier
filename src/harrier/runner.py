@@ -19,6 +19,9 @@ from typing import Any, Callable, Sequence
 
 # Default global cap on concurrent outbound jobs from this host.
 DEFAULT_MAX_CONCURRENCY = 5
+# Hard politeness ceiling: max_concurrency is caller-supplied (MCP tool arg), and
+# an unbounded value would hammer third-party sites from the host IP.
+MAX_CONCURRENCY = 10
 DEFAULT_TIMEOUT = 30
 DEFAULT_JITTER = 0.3  # seconds; actual delay is uniform(0, jitter)
 
@@ -38,7 +41,7 @@ async def run_jobs(
     """
     if not jobs:
         return []
-    sem = asyncio.Semaphore(max(1, max_concurrency))
+    sem = asyncio.Semaphore(min(MAX_CONCURRENCY, max(1, int(max_concurrency or 1))))
 
     async def _one(tool: str, fn: Callable[[], Any]) -> tuple[str, Any]:
         async with sem:

@@ -199,6 +199,10 @@ def run(
     except SelectorError as exc:
         return AdapterResult(status="error", tool=TOOL, reason=str(exc))
 
+    if engine not in ("sherlock", "maigret"):
+        return AdapterResult(status="error", tool=TOOL,
+                             reason=f"unknown engine {engine!r}; use 'sherlock' or 'maigret'")
+
     site_list = DEFAULT_SITES if sites is None else sites
     if engine == "maigret":
         result = _run_maigret(selector, timeout)
