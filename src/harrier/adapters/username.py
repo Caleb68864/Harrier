@@ -225,9 +225,14 @@ def register(app) -> None:
     """Register the `username_sweep` MCP tool."""
 
     @app.tool(name="username_sweep")
-    def username_sweep(selector: str, timeout: int = 30) -> dict:
-        """Enumerate a username across social sites via Sherlock/Maigret."""
-        res = run(selector, timeout=timeout)
+    def username_sweep(selector: str, timeout: int = 60, engine: str = "sherlock",
+                       sites: list[str] | None = None) -> dict:
+        """Enumerate a username across social sites via Sherlock/Maigret.
+
+        ``engine``: "sherlock" (fast existence) or "maigret" (slower, extracts
+        profile metadata). ``sites`` restricts the Sherlock site list.
+        """
+        res = run(selector, timeout=timeout, engine=engine, sites=sites)
         return {
             "status": res.status,
             "count": len(res),

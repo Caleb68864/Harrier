@@ -61,3 +61,17 @@ def test_build_graph_reports_invalid_findings():
 def test_manual_assist_payload():
     out = _call("manual_assist", {"name": "Amanda Bennett"})
     assert out["count"] == len(out["links"]) > 0
+
+
+def test_username_sweep_wrapper_matches_adapter_defaults(monkeypatch):
+    from harrier.adapters import AdapterResult, username
+
+    seen = {}
+
+    def fake_run(selector, **kw):
+        seen.update(kw)
+        return AdapterResult(status="ok", tool="maigret")
+
+    monkeypatch.setattr(username, "run", fake_run)
+    _call("username_sweep", {"selector": "amandab", "engine": "maigret"})
+    assert seen["timeout"] == 60 and seen["engine"] == "maigret"
