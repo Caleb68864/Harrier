@@ -99,7 +99,7 @@ def test_email_all_backends_failing_is_error_with_reason(monkeypatch):
 
     monkeypatch.setattr(email, "_lib_importable", lambda m: True)
 
-    def boom_holehe(addr, errors=None):
+    def boom_holehe(addr, errors=None, notes=None):
         errors.append("holehe failed (ConnectError: dns)")
         return []
 
@@ -118,7 +118,7 @@ def test_email_one_backend_failing_keeps_ok_with_reason(monkeypatch):
     from harrier.adapters import email
 
     monkeypatch.setattr(email, "_lib_importable", lambda m: True)
-    monkeypatch.setattr(email, "_run_holehe", lambda a, errors=None: [])
+    monkeypatch.setattr(email, "_run_holehe", lambda a, errors=None, notes=None: [])
 
     def boom_social(addr, errors=None):
         errors.append("socialscan failed (RuntimeError)")
@@ -413,3 +413,17 @@ def test_people_search_browser_error_carries_exception(monkeypatch):
     reason = res["findings"][0].reason
     assert "RuntimeError" in reason and "Executable doesn't exist" in reason
     assert people_search._result_reason(res) == reason
+
+
+def test_holehe_rate_limited_sites_are_reported_not_hidden(monkeypatch):
+    from harrier.adapters import email
+
+    raw = [{"name": "instagram", "exists": False, "rateLimit": True},
+           {"name": "twitter", "exists": True, "rateLimit": False},
+           {"name": "spotify", "exists": False, "rateLimit": False}]
+    monkeypatch.setattr("harrier.runner.run_coro_sync", lambda make: raw)
+    errors, notes = [], []
+    found = email._run_holehe("a@example.com", errors, notes)
+    assert [f.value for f in found] == ["twitter"]
+    assert errors == []
+    assert notes and "1 site(s) rate-limited" in notes[0] and "instagram" in notes[0]

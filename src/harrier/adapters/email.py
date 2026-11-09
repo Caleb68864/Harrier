@@ -43,7 +43,8 @@ def _exc_text(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {msg[:200]}" if msg else type(exc).__name__
 
 
-def _run_holehe(email: str, errors: list[str] | None = None) -> list[Finding]:
+def _run_holehe(email: str, errors: list[str] | None = None,
+                notes: list[str] | None = None) -> list[Finding]:
     """Run holehe over its module set. Returns [] if holehe is unusable.
 
     Failure causes are appended to ``errors`` (if given) so the caller can
@@ -97,6 +98,15 @@ def _run_holehe(email: str, errors: list[str] | None = None) -> list[Finding]:
         return []
 
     findings: list[Finding] = []
+    rate_limited = sorted(
+        str(e.get("name") or e.get("domain") or "?") for e in raw or []
+        if isinstance(e, dict) and e.get("rateLimit") is True)
+    if rate_limited:
+        # A rate-limited site reports exists=False — that is "unknown", not a
+        # negative. Say so, so the agent doesn't read it as "not registered".
+        shown = ", ".join(rate_limited[:10]) + (" ..." if len(rate_limited) > 10 else "")
+        _note(notes, f"holehe: {len(rate_limited)} site(s) rate-limited, "
+                     f"result unknown ({shown})")
     for entry in raw or []:
         if not isinstance(entry, dict):
             continue
@@ -179,11 +189,12 @@ def run(selector: str, **opts) -> AdapterResult:
 
     findings: list[Finding] = []
     errors: list[str] = []
+    notes: list[str] = []
     if holehe_ok:
-        findings.extend(_run_holehe(email, errors))
+        findings.extend(_run_holehe(email, errors, notes))
     if socialscan_ok:
         findings.extend(_run_socialscan(email, errors))
-    reason = "; ".join(errors) or None
+    reason = "; ".join(errors + notes) or None
     attempted = int(holehe_ok) + int(socialscan_ok)
     if not findings and len(errors) >= attempted:
         # Every installed backend failed: that is an error, not "not found".
