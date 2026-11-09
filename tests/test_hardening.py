@@ -389,3 +389,27 @@ def test_username_unknown_engine_is_error():
     res = username.run("amandab", engine="sherlok")
     assert res.status == "error"
     assert "sherlock" in res.reason and "maigret" in res.reason
+
+
+# --- people_search: browser error detail + top-level reason --------------------
+
+def test_people_search_browser_error_carries_exception(monkeypatch):
+    import sys
+    import types
+
+    from harrier.adapters import people_search
+
+    fake = types.ModuleType("playwright.sync_api")
+    fake.sync_playwright = object()
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+
+    def boom():
+        raise RuntimeError("Executable doesn't exist at /chromium\\nmore")
+
+    monkeypatch.setattr("harrier.runner.run_in_thread", lambda fn: boom())
+    res = people_search.run("Amanda Bennett", consent=True, _sleep=False)
+    assert res["status"] == "unavailable"
+    reason = res["findings"][0].reason
+    assert "RuntimeError" in reason and "Executable doesn't exist" in reason
+    assert people_search._result_reason(res) == reason

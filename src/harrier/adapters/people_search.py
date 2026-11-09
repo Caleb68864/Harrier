@@ -130,12 +130,14 @@ def run(
     status_code, html = _fetch(sync_playwright, name, city_or_state, site)
 
     if status_code == "ERROR":
+        # On ERROR, _fetch puts the exception summary in the html slot.
+        detail = f" ({html})" if html else ""
         return {
             "findings": [
                 _blocked_finding(
                     name, site,
-                    reason="browser error during fetch; perform the lookup "
-                    "manually (see docs/ss04-spike-evidence.md).",
+                    reason=f"browser error during fetch{detail}; perform the "
+                    "lookup manually (see docs/ss04-spike-evidence.md).",
                 )
             ],
             "status": "unavailable",
@@ -177,8 +179,9 @@ def _fetch(sync_playwright, name, city_or_state, site):
         # run inside one, which would otherwise disable the scrape in the server.
         from harrier.runner import run_in_thread
         return run_in_thread(_do)
-    except Exception:  # noqa: BLE001
-        return "ERROR", ""
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc).strip().splitlines()[0][:200] if str(exc).strip() else ""
+        return "ERROR", f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
 
 
 def _parse(html: str, name: str, site: str) -> list[Finding]:
@@ -201,6 +204,16 @@ def _parse(html: str, name: str, site: str) -> list[Finding]:
     ]
 
 
+def _result_reason(res: dict) -> str | None:
+    """Top-level reason for the MCP payload (parity with the other tools)."""
+    if res.get("status") == "error":
+        return "empty name"
+    for f in res.get("findings") or []:
+        if f.reason:
+            return f.reason
+    return None
+
+
 def register(app) -> None:
     """Register the `people_search` MCP tool."""
 
@@ -217,4 +230,5 @@ def register(app) -> None:
             "status": res["status"],
             "count": len(res["findings"]),
             "findings": [f.model_dump() for f in res["findings"]],
+            "reason": _result_reason(res),
         }
