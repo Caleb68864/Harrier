@@ -13,6 +13,7 @@ found; the "is this really them?" call still belongs to the analyst.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -185,7 +186,16 @@ def to_graphml(graph: dict) -> str:
 
 
 def _cy(s: Any) -> str:
-    return str(s).replace("\\", "\\\\").replace("'", "\\'")
+    return (str(s).replace("\\", "\\\\").replace("'", "\\'")
+            .replace("\n", "\\n").replace("\r", "\\r"))
+
+
+def _finite(x: Any, default: float = 0.0) -> float:
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return default
+    return v if math.isfinite(v) else default
 
 
 def to_cypher(graph: dict) -> str:
@@ -207,7 +217,7 @@ def to_cypher(graph: dict) -> str:
         method = _cy(e.get("source_tool") or "")
         lines.append(
             f"MATCH (a {{id:'{_cy(e['source'])}'}}),(b {{id:'{_cy(e['target'])}'}}) "
-            f"MERGE (a)-[r:{rel}]->(b) SET r.weight={e['weight']}, r.method='{method}';")
+            f"MERGE (a)-[r:{rel}]->(b) SET r.weight={_finite(e.get('weight'))}, r.method='{method}';")
     return "\n".join(lines)
 
 
