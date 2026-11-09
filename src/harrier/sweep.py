@@ -164,7 +164,38 @@ def _merge_sources(rows: list[tuple[str, str, list[Finding]]],
     return list(agg.values())
 
 
-def person_sweep(
+def person_sweep(name: str, *args, **kwargs) -> dict:
+    """Run a full multi-source sweep for a person (see :func:`_person_sweep`).
+
+    Enforces the never-raises contract at the boundary: an unexpected exception
+    in any stage (correlate / verify / tradecraft) returns a well-formed, empty
+    result whose ``error`` and ``sources[]`` say what failed, instead of
+    crashing the MCP tool call.
+    """
+    try:
+        return _person_sweep(name, *args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 — boundary guard
+        log.exception("person_sweep failed")
+        why = _reason(exc)
+        try:
+            links = assist.manual_assist_links(
+                name, city=kwargs.get("city"), state=kwargs.get("state"),
+                maiden=kwargs.get("maiden"), married=kwargs.get("married"))
+        except Exception:  # noqa: BLE001
+            links = []
+        return {
+            "findings": [],
+            "sources": [{"tool": "person_sweep", "status": "error", "count": 0,
+                         "reasons": [why]}],
+            "candidates": [],
+            "suppressed": 0,
+            "verify": None,
+            "manual_assist": links,
+            "error": f"person_sweep internal error: {why}",
+        }
+
+
+def _person_sweep(
     name: str,
     city: str | None = None,
     state: str | None = None,
@@ -300,4 +331,5 @@ def register(app) -> None:
             "suppressed": res["suppressed"],
             "verify": res["verify"],
             "manual_assist": res["manual_assist"],
+            "error": res.get("error"),
         }

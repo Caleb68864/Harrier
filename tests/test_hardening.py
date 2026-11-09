@@ -427,3 +427,32 @@ def test_holehe_rate_limited_sites_are_reported_not_hidden(monkeypatch):
     assert [f.value for f in found] == ["twitter"]
     assert errors == []
     assert notes and "1 site(s) rate-limited" in notes[0] and "instagram" in notes[0]
+
+
+# --- boundary guard: person_sweep / investigate never raise --------------------
+
+def test_person_sweep_internal_error_is_reported_not_raised(monkeypatch):
+    from harrier import sweep
+
+    def boom(*a, **k):
+        raise KeyError("confidence")
+
+    monkeypatch.setattr(sweep, "correlate", boom)
+    monkeypatch.setattr(sweep, "run_jobs_sync", lambda jobs, **k: [])
+    res = sweep.person_sweep("Amanda Bennett", permute=False)
+    assert res["findings"] == []
+    assert "KeyError" in res["error"]
+    assert res["sources"][0]["status"] == "error"
+    assert res["manual_assist"]  # manual links still handed back
+
+
+def test_investigate_internal_error_is_reported_not_raised(monkeypatch):
+    from harrier import investigate as inv
+
+    def boom(*a, **k):
+        raise RuntimeError("sweep exploded")
+
+    monkeypatch.setattr(inv.sweep_mod, "person_sweep", boom)
+    res = inv.investigate("Amanda Bennett")
+    assert res["findings"] == []
+    assert "sweep exploded" in res["error"]

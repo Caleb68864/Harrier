@@ -80,7 +80,25 @@ def _is_corroborated(f: Finding) -> bool:
     return (f.raw or {}).get("verify", {}).get("verdict") == "corroborated"
 
 
-def investigate(
+def investigate(name: str, *args, **kwargs) -> dict:
+    """Bounded investigation (see :func:`_investigate`); never raises.
+
+    An unexpected exception returns a well-formed empty result with ``error``
+    set, so the MCP call reports the failure instead of crashing.
+    """
+    try:
+        return _investigate(name, *args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 — boundary guard
+        import logging
+        logging.getLogger("harrier.investigate").exception("investigate failed")
+        msg = str(exc).strip()
+        why = f"{type(exc).__name__}: {msg[:300]}" if msg else type(exc).__name__
+        return {"target": name, "rounds_run": 0, "tool_calls": [], "discovered": [],
+                "findings": [], "corroborated": [], "next_steps": [],
+                "manual_assist": [], "error": f"investigate internal error: {why}"}
+
+
+def _investigate(
     name: str,
     city: str | None = None,
     state: str | None = None,
@@ -188,4 +206,5 @@ def register(app) -> None:
             "corroborated": [f.model_dump() for f in res["corroborated"]],
             "next_steps": res["next_steps"],
             "manual_assist": res["manual_assist"],
+            "error": res.get("error"),
         }
