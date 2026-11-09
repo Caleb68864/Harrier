@@ -456,3 +456,31 @@ def test_investigate_internal_error_is_reported_not_raised(monkeypatch):
     res = inv.investigate("Amanda Bennett")
     assert res["findings"] == []
     assert "sweep exploded" in res["error"]
+
+
+# --- graph Cypher export: newlines escaped, non-finite weights neutralized ----
+
+def test_cypher_escapes_newlines_and_nonfinite_weight():
+    from harrier.graph import to_cypher
+
+    g = {"nodes": [{"id": "person:a", "type": "person", "label": "A"},
+                   {"id": "account:x", "type": "account", "label": "line1\nline2\r'x"}],
+         "edges": [{"source": "person:a", "target": "account:x",
+                    "relation": "has_account", "weight": float("nan"),
+                    "source_tool": "sherlock"}]}
+    out = to_cypher(g)
+    assert all(line.endswith(";") for line in out.splitlines())  # one stmt per line
+    assert "nan" not in out.lower().split("r.weight=")[1].split(",")[0]
+
+
+def test_genealogy_spouse_surname_compare_is_case_insensitive(monkeypatch):
+    monkeypatch.setenv("FAMILYSEARCH_ACCESS_TOKEN", "x")
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["url"] = req.full_url
+        raise OSError("offline")
+
+    monkeypatch.setattr(genealogy.urllib.request, "urlopen", fake_urlopen)
+    genealogy.run("Amanda", "Bennett", married="bennett")
+    assert "spouseSurname" not in seen["url"]

@@ -45,7 +45,7 @@ def run(first: str, last: str, maiden: str | None = None,
         return AdapterResult(status="error", tool=TOOL, reason="need a name")
 
     params = {"q.givenName": given, "q.surname": surname}
-    if married and married != surname:
+    if married and married.strip().lower() != surname.lower():
         params["q.spouseSurname"] = married
     req = urllib.request.Request(
         _API + "?" + urlencode(params),
