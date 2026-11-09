@@ -135,8 +135,14 @@ def build_graph(findings: list[Finding], anchor: dict | None = None) -> dict:
 
 # --- exporters ---------------------------------------------------------------
 
+# XML 1.0 forbids C0 control chars other than tab/LF/CR; scraped values can
+# carry them, which would make the whole GraphML document unparseable.
+_XML_ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
 def _xml_escape(s: Any) -> str:
-    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    s = _XML_ILLEGAL.sub("", str(s))
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;"))
 
 
@@ -205,6 +211,29 @@ def to_cypher(graph: dict) -> str:
     return "\n".join(lines)
 
 
+def parse_findings(items: list) -> tuple[list[Finding], list[dict]]:
+    """Validate caller-supplied finding dicts; skip bad ones instead of raising.
+
+    Returns ``(findings, errors)`` where each error is ``{"index", "error"}`` so
+    the calling agent can see exactly which input was rejected and why.
+    """
+    findings: list[Finding] = []
+    errors: list[dict] = []
+    for i, d in enumerate(items or []):
+        if not isinstance(d, dict):
+            errors.append({"index": i, "error": f"expected an object, got {type(d).__name__}"})
+            continue
+        try:
+            findings.append(Finding(**d))
+        except Exception as exc:  # noqa: BLE001 — pydantic ValidationError etc.
+            msg = "; ".join(
+                f"{'.'.join(str(p) for p in e.get('loc', ()))}: {e.get('msg')}"
+                for e in getattr(exc, "errors", lambda: [])()
+            ) or str(exc)
+            errors.append({"index": i, "error": msg[:300]})
+    return findings, errors
+
+
 def register(app) -> None:
     """Register the `build_graph` MCP tool."""
 
@@ -231,8 +260,9 @@ def register(app) -> None:
         """
         anchor = {"name": name, "city": city, "state": state,
                   "maiden": maiden, "married": married}
+        invalid: list[dict] = []
         if findings is not None:
-            fs = [Finding(**d) for d in findings]
+            fs, invalid = parse_findings(findings)
         else:
             from harrier import sweep as sweep_mod
             res = sweep_mod.person_sweep(
@@ -246,4 +276,5 @@ def register(app) -> None:
             "graphml": to_graphml(graph),
             "cypher": to_cypher(graph),
             "stats": graph["stats"],
+            "invalid_findings": invalid,
         }

@@ -262,3 +262,28 @@ def test_assist_opencorporates_jurisdiction_is_valid():
 
     assert oc("NE").endswith("&jurisdiction_code=us_ne")
     assert "jurisdiction_code" not in oc("New York")  # no space / bogus code
+
+
+# --- graph: tolerate malformed input findings; emit well-formed GraphML -------
+
+def test_parse_findings_skips_invalid_with_actionable_errors():
+    from harrier.graph import parse_findings
+
+    good = {"selector": "amandab", "source_tool": "sherlock",
+            "url": "https://github.com/amandab", "value": "https://github.com/amandab"}
+    fs, errors = parse_findings([good, {"selector": "x"}, "junk", {**good, "confidence": "huge"}])
+    assert len(fs) == 1
+    assert len(errors) == 3
+    assert errors[0]["index"] == 1 and "source_tool" in errors[0]["error"]
+    assert errors[1]["index"] == 2
+
+
+def test_graphml_strips_xml_illegal_control_chars():
+    import xml.dom.minidom
+
+    from harrier.graph import build_graph, to_graphml
+    from harrier.schema import Finding
+
+    f = Finding(selector="a", source_tool="sherlock", value="bad\x00\x0bname\x1f")
+    xml_text = to_graphml(build_graph([f], {"name": "Amanda\x07 Bennett"}))
+    xml.dom.minidom.parseString(xml_text)  # raises on illegal chars
