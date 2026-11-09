@@ -19,9 +19,12 @@ matches a *standalone* "wademan" (a real display name), not the handle echo.
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 from harrier.distinct import COMMON_SURNAMES
 from harrier.schema import Finding
@@ -52,17 +55,70 @@ def _is_http_url(url) -> bool:
     return isinstance(url, str) and url.lower().startswith(("http://", "https://"))
 
 
+def _ip_is_public(addr: str) -> bool:
+    """True only for globally routable unicast addresses.
+
+    Refuses loopback, RFC1918/ULA private, link-local (incl. the 169.254.169.254
+    cloud-metadata endpoint), CGNAT, multicast, reserved and unspecified.
+    """
+    try:
+        ip = ipaddress.ip_address(addr.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
+def _is_public_http_url(url) -> bool:
+    """http(s) URL whose host resolves ONLY to public addresses (SSRF guard).
+
+    Every resolved address must be public: a host with any private/loopback/
+    link-local A/AAAA record is refused. Resolution failure is refused too.
+    Note: a DNS-rebinding race between this check and the connect remains
+    possible (tracked in docs/ROADMAP.md).
+    """
+    if not _is_http_url(url):
+        return False
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, OSError):
+        return False
+    addrs = {info[4][0] for info in infos}
+    return bool(addrs) and all(_ip_is_public(a) for a in addrs)
+
+
+class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-apply the scheme + public-host check on EVERY redirect hop."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _is_public_http_url(newurl):
+            raise urllib.error.HTTPError(
+                newurl, 0, "redirect to non-public or non-http(s) URL refused",
+                headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_GuardedRedirectHandler)
+
+
 def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str]:
     """Plain GET; return (status, text). status 0 on network error.
 
     Only http/https is fetched — a finding URL is provider-derived but untrusted,
     so refuse file://, ftp://, gopher:// etc. (SSRF / local-file surface).
     """
-    if not _is_http_url(url):
+    if not _is_public_http_url(url):
         return 0, ""
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _OPENER.open(req, timeout=timeout) as resp:
             body = resp.read(200_000).decode("utf-8", "replace")
             return getattr(resp, "status", 200) or 200, body
     except urllib.error.HTTPError as exc:
@@ -71,12 +127,20 @@ def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str]:
         return 0, ""
 
 
+def _route_guard(route) -> None:
+    """Playwright route handler: abort any request to a non-public host."""
+    if _is_public_http_url(route.request.url):
+        route.continue_()
+    else:
+        route.abort()
+
+
 def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
     """Render a page in headless Chromium (executes JS). None if unavailable/failed.
 
     Refuses non-http(s) URLs: Chromium would happily open ``file://`` paths.
     """
-    if not _is_http_url(url):
+    if not _is_public_http_url(url):
         return None
     try:
         from playwright.sync_api import sync_playwright
@@ -90,6 +154,9 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
             browser = p.chromium.launch(headless=True)
             ctx = browser.new_context(user_agent=_UA)
             page = ctx.new_page()
+            # SSRF guard per request: covers redirect hops and sub-resources,
+            # which the up-front URL check alone cannot see.
+            page.route("**/*", _route_guard)
             try:
                 page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
                 page.wait_for_timeout(1500)  # let client-side JS populate
