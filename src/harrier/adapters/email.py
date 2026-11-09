@@ -33,12 +33,27 @@ def _validate_email(email: str) -> str:
     return email.strip().lower()
 
 
-def _run_holehe(email: str) -> list[Finding]:
-    """Run holehe over its module set. Returns [] if holehe is unusable."""
+def _note(errors: list[str] | None, msg: str) -> None:
+    if errors is not None:
+        errors.append(msg)
+
+
+def _exc_text(exc: BaseException) -> str:
+    msg = str(exc).strip()
+    return f"{type(exc).__name__}: {msg[:200]}" if msg else type(exc).__name__
+
+
+def _run_holehe(email: str, errors: list[str] | None = None) -> list[Finding]:
+    """Run holehe over its module set. Returns [] if holehe is unusable.
+
+    Failure causes are appended to ``errors`` (if given) so the caller can
+    report *why* the pass yielded nothing instead of a silent ``ok``.
+    """
     try:
         import httpx
         from holehe.core import import_submodules, get_functions
-    except Exception:  # noqa: BLE001 — missing/incompatible import → degrade
+    except Exception as exc:  # noqa: BLE001 — missing/incompatible import → degrade
+        _note(errors, f"holehe import failed ({_exc_text(exc)})")
         return []
 
     import asyncio
@@ -74,7 +89,11 @@ def _run_holehe(email: str) -> list[Finding]:
         from harrier.runner import run_coro_sync
         raw = run_coro_sync(
             lambda: asyncio.wait_for(_gather(), timeout=_HOLEHE_BUDGET))
-    except Exception:  # noqa: BLE001 — includes TimeoutError → degrade to []
+    except (asyncio.TimeoutError, TimeoutError):
+        _note(errors, f"holehe exceeded its {_HOLEHE_BUDGET}s budget; no results")
+        return []
+    except Exception as exc:  # noqa: BLE001 — degrade to []
+        _note(errors, f"holehe failed ({_exc_text(exc)})")
         return []
 
     findings: list[Finding] = []
@@ -97,11 +116,12 @@ def _run_holehe(email: str) -> list[Finding]:
     return findings
 
 
-def _run_socialscan(email: str) -> list[Finding]:
-    """Run socialscan for the email. Returns [] if unusable."""
+def _run_socialscan(email: str, errors: list[str] | None = None) -> list[Finding]:
+    """Run socialscan for the email. Returns [] if unusable (cause → ``errors``)."""
     try:
         from socialscan.util import Platforms, sync_execute_queries
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _note(errors, f"socialscan import failed ({_exc_text(exc)})")
         return []
 
     try:
@@ -111,7 +131,8 @@ def _run_socialscan(email: str) -> list[Finding]:
         from harrier.runner import run_in_thread
         results = run_in_thread(lambda: sync_execute_queries(
             [email], [Platforms.GITHUB, Platforms.INSTAGRAM]))
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _note(errors, f"socialscan failed ({_exc_text(exc)})")
         return []
 
     findings: list[Finding] = []
@@ -157,9 +178,17 @@ def run(selector: str, **opts) -> AdapterResult:
         )
 
     findings: list[Finding] = []
-    findings.extend(_run_holehe(email))
-    findings.extend(_run_socialscan(email))
-    return AdapterResult(findings, status="ok", tool=TOOL)
+    errors: list[str] = []
+    if holehe_ok:
+        findings.extend(_run_holehe(email, errors))
+    if socialscan_ok:
+        findings.extend(_run_socialscan(email, errors))
+    reason = "; ".join(errors) or None
+    attempted = int(holehe_ok) + int(socialscan_ok)
+    if not findings and len(errors) >= attempted:
+        # Every installed backend failed: that is an error, not "not found".
+        return AdapterResult(status="error", tool=TOOL, reason=reason)
+    return AdapterResult(findings, status="ok", tool=TOOL, reason=reason)
 
 
 def _lib_importable(module: str) -> bool:

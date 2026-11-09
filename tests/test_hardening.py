@@ -90,3 +90,59 @@ def test_merge_sources_backward_compatible_without_reasons():
     from harrier import sweep
     out = sweep._merge_sources([("email", "ok", [])])
     assert out == [{"tool": "email", "status": "ok", "count": 0}]
+
+
+# --- email: backend failures are reported, not a silent "ok" -----------------
+
+def test_email_all_backends_failing_is_error_with_reason(monkeypatch):
+    from harrier.adapters import email
+
+    monkeypatch.setattr(email, "_lib_importable", lambda m: True)
+
+    def boom_holehe(addr, errors=None):
+        errors.append("holehe failed (ConnectError: dns)")
+        return []
+
+    def boom_social(addr, errors=None):
+        errors.append("socialscan failed (RuntimeError)")
+        return []
+
+    monkeypatch.setattr(email, "_run_holehe", boom_holehe)
+    monkeypatch.setattr(email, "_run_socialscan", boom_social)
+    res = email.run("a@example.com")
+    assert res.status == "error"
+    assert "ConnectError" in res.reason and "socialscan" in res.reason
+
+
+def test_email_one_backend_failing_keeps_ok_with_reason(monkeypatch):
+    from harrier.adapters import email
+
+    monkeypatch.setattr(email, "_lib_importable", lambda m: True)
+    monkeypatch.setattr(email, "_run_holehe", lambda a, errors=None: [])
+
+    def boom_social(addr, errors=None):
+        errors.append("socialscan failed (RuntimeError)")
+        return []
+
+    monkeypatch.setattr(email, "_run_socialscan", boom_social)
+    res = email.run("a@example.com")
+    assert res.status == "ok"
+    assert "socialscan failed" in res.reason
+
+
+def test_holehe_import_failure_records_reason(monkeypatch):
+    import builtins
+
+    from harrier.adapters import email
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name.startswith("holehe"):
+            raise ImportError("no holehe")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    errors: list[str] = []
+    assert email._run_holehe("a@example.com", errors) == []
+    assert errors and "holehe import failed" in errors[0]
