@@ -218,6 +218,10 @@ def _person_sweep(
     """
     nicknames = nicknames or []
     first, last = _split_name(name)
+    warnings: list[str] = []
+    if depth not in _BUDGET:
+        warnings.append(f"unknown depth {depth!r}; used 'quick' "
+                        f"(valid: {', '.join(sorted(_BUDGET))})")
     budget = _BUDGET.get(depth, _BUDGET["quick"])
     anchor_surnames = [s for s in (last, maiden, married) if s]
 
@@ -292,6 +296,7 @@ def _person_sweep(
         "candidates": cands,
         "suppressed": suppressed,
         "verify": verify_stats,
+        "warnings": warnings,
         # Always hand back pre-filled links to the walled/gated free sources — the
         # honest replacement for the blocked people-search (Phase 4).
         "manual_assist": assist.manual_assist_links(
@@ -332,4 +337,5 @@ def register(app) -> None:
             "verify": res["verify"],
             "manual_assist": res["manual_assist"],
             "error": res.get("error"),
+            "warnings": res.get("warnings", []),
         }

@@ -484,3 +484,13 @@ def test_genealogy_spouse_surname_compare_is_case_insensitive(monkeypatch):
     monkeypatch.setattr(genealogy.urllib.request, "urlopen", fake_urlopen)
     genealogy.run("Amanda", "Bennett", married="bennett")
     assert "spouseSurname" not in seen["url"]
+
+
+def test_person_sweep_warns_on_unknown_depth(monkeypatch):
+    from harrier import sweep
+
+    monkeypatch.setattr(sweep, "run_jobs_sync", lambda jobs, **k: [])
+    res = sweep.person_sweep("Amanda Bennett", depth="exhaustive", permute=False)
+    assert "error" not in res
+    assert res["warnings"] and "exhaustive" in res["warnings"][0]
+    assert sweep.person_sweep("Amanda Bennett", depth="deep", permute=False)["warnings"] == []
