@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlencode
 
-from harrier.adapters import AdapterResult
+from harrier.adapters import AdapterResult, as_text
 from harrier.schema import Finding
 
 TOOL = "courtlistener"
@@ -58,7 +58,8 @@ def run(name: str, state: str | None = None, timeout: int = 15) -> AdapterResult
                    "CourtListener link.",
         )
 
-    results = data.get("results") or []
+    results = data.get("results") if isinstance(data, dict) else None
+    results = results or []
     if not isinstance(results, list):  # malformed API shape → treat as no hits
         return AdapterResult(status="empty", tool=TOOL,
                              reason="unexpected CourtListener response shape")
@@ -66,16 +67,21 @@ def run(name: str, state: str | None = None, timeout: int = 15) -> AdapterResult
     for r in results[:20]:
         if not isinstance(r, dict):
             continue
-        caption = r.get("caseName") or r.get("case_name") or "case"
-        court = r.get("court") or r.get("court_id") or ""
-        date = r.get("dateFiled") or r.get("date_filed") or ""
-        rel = r.get("absolute_url") or ""
-        url = ("https://www.courtlistener.com" + rel) if rel.startswith("/") else (rel or None)
+        caption = as_text(r.get("caseName") or r.get("case_name")) or "case"
+        court = as_text(r.get("court") or r.get("court_id")) or ""
+        date = as_text(r.get("dateFiled") or r.get("date_filed")) or ""
+        rel = as_text(r.get("absolute_url")) or ""
+        if rel.startswith("/"):
+            url = "https://www.courtlistener.com" + rel
+        elif rel.startswith(("http://", "https://")):
+            url = rel
+        else:  # non-URL junk from a drifted API shape — don't emit a bogus link
+            url = None
         findings.append(Finding(
             selector=name, source_tool=TOOL, url=url, value=caption, exists=True,
             confidence="low", tier="free",
             reason=" · ".join(x for x in (str(court), str(date)) if x) or None,
-            raw={"docket_number": r.get("docketNumber") or r.get("docket_number")},
+            raw={"docket_number": as_text(r.get("docketNumber") or r.get("docket_number"))},
         ))
     return AdapterResult(findings, status="ok" if findings else "empty", tool=TOOL)
 

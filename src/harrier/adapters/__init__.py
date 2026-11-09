@@ -97,3 +97,35 @@ def run_subprocess(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> subproces
         shell=False,
         check=False,
     )
+
+
+def as_text(value) -> str | None:
+    """Coerce an untrusted tool/API field to ``str`` (or None).
+
+    Tool and API output drifts; a dict/int where a string was expected must not
+    raise a pydantic ValidationError out of an adapter. Strings pass through,
+    scalars are stringified, containers/None become None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return None
+
+
+def exit_failure_reason(tool: str, proc: subprocess.CompletedProcess,
+                        limit: int = 300) -> str | None:
+    """Return an actionable reason if ``proc`` exited non-zero, else None.
+
+    Includes the exit code and the tail of stderr (or stdout) so the calling
+    agent can tell "tool ran, found nothing" apart from "tool failed".
+    """
+    if proc.returncode == 0:
+        return None
+    detail = (proc.stderr or proc.stdout or "").strip()
+    if len(detail) > limit:
+        detail = "..." + detail[-limit:]
+    msg = f"{tool} failed (exit {proc.returncode})"
+    return f"{msg}: {detail}" if detail else msg

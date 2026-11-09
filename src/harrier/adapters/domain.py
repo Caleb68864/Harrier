@@ -82,18 +82,23 @@ def _parse_report(folder: str, domain: str) -> list[Finding]:
     except (json.JSONDecodeError, OSError):
         return findings
 
-    for email in (data.get("emails") or []):
-        findings.append(
-            Finding(selector=domain, source_tool="theHarvester", value=email,
-                    exists=True, confidence="low", tier="free",
-                    raw={"type": "email", "value": email})
-        )
-    for host in (data.get("hosts") or []):
-        findings.append(
-            Finding(selector=domain, source_tool="theHarvester", value=host,
-                    exists=True, confidence="low", tier="free",
-                    raw={"type": "host", "value": host})
-        )
+    if not isinstance(data, dict):  # drifted/malformed report shape
+        return findings
+
+    for kind, key in (("email", "emails"), ("host", "hosts")):
+        items = data.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            # Emails/hosts are strings by definition; a number/dict is junk.
+            value = item.strip() if isinstance(item, str) else ""
+            if not value:
+                continue
+            findings.append(
+                Finding(selector=domain, source_tool="theHarvester", value=value,
+                        exists=True, confidence="low", tier="free",
+                        raw={"type": kind, "value": value})
+            )
     return findings
 
 

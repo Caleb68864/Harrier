@@ -18,6 +18,7 @@ import subprocess
 from harrier.adapters import (
     AdapterResult,
     SelectorError,
+    as_text,
     binary_available,
     run_subprocess,
 )
@@ -95,7 +96,8 @@ def _parse(stdout: str, number: str) -> list[Finding]:
             Finding(
                 selector=number,
                 source_tool="phoneinfoga",
-                value=result.get("carrier") or result.get("country") or "scan",
+                value=(as_text(result.get("carrier"))
+                       or as_text(result.get("country")) or "scan"),
                 exists=None,
                 confidence="low",
                 tier="free",

@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlencode
 
-from harrier.adapters import AdapterResult
+from harrier.adapters import AdapterResult, as_text
 from harrier.schema import Finding
 
 TOOL = "familysearch"
@@ -62,20 +62,36 @@ def run(first: str, last: str, maiden: str | None = None,
                              reason="FamilySearch unreachable; use the manual_assist link.")
 
     findings: list[Finding] = []
-    for e in (data.get("entries") or [])[:20]:
-        gedcomx = (e.get("content") or {}).get("gedcomx") or {}
-        persons = gedcomx.get("persons") or []
-        label = None
-        if persons:
-            names = persons[0].get("names") or []
-            if names:
-                forms = names[0].get("nameForms") or [{}]
-                label = forms[0].get("fullText")
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        entries = []
+    for e in entries[:20]:
+        if not isinstance(e, dict):
+            continue
         findings.append(Finding(
             selector=f"{given} {surname}".strip(), source_tool=TOOL, url=None,
-            value=label or "record", exists=True, confidence="low", tier="free",
-            raw={"id": e.get("id")}))
+            value=_entry_label(e) or "record", exists=True, confidence="low",
+            tier="free", raw={"id": as_text(e.get("id"))}))
     return AdapterResult(findings, status="ok" if findings else "empty", tool=TOOL)
+
+
+def _first_dict(seq) -> dict:
+    """First element of ``seq`` if it is a non-empty list of dicts, else {}."""
+    if isinstance(seq, list) and seq and isinstance(seq[0], dict):
+        return seq[0]
+    return {}
+
+
+def _entry_label(e: dict) -> str | None:
+    """Pull persons[0].names[0].nameForms[0].fullText defensively (GEDCOM X)."""
+    content = e.get("content")
+    gedcomx = content.get("gedcomx") if isinstance(content, dict) else None
+    if not isinstance(gedcomx, dict):
+        return None
+    person = _first_dict(gedcomx.get("persons"))
+    name = _first_dict(person.get("names"))
+    form = _first_dict(name.get("nameForms"))
+    return as_text(form.get("fullText"))
 
 
 def register(app) -> None:
