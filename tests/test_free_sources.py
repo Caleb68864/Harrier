@@ -70,8 +70,8 @@ def test_free_sources_pinned_to_checked_harvester_version():
     assert domain.HARVESTER_VERSION_CHECKED == "4.11.1"
     assert domain.FREE_SOURCES == (
         "certspotter", "commoncrawl", "crtsh", "hackertarget", "otx",
-        "rapiddns", "robtex", "subdomaincenter", "thc", "threatcrowd",
-        "urlscan", "waybackarchive",
+        "rapiddns", "robtex", "subdomaincenter", "thc", "urlscan",
+        "waybackarchive",
     )
     assert set(domain.FREE_SOURCES) <= _HARVESTER_4_11_1_ENGINES
     assert not set(domain.FREE_SOURCES) & _HARVESTER_4_11_1_KEYED
@@ -83,3 +83,12 @@ def test_free_sources_pinned_to_checked_harvester_version():
     assert "shodanInternetDB" not in domain.FREE_SOURCES
     # _validate_sources lowercases input, so every entry must be lowercase.
     assert all(s == s.lower() for s in domain.FREE_SOURCES)
+
+
+def test_threatcrowd_is_excluded_and_the_harvest_budget_covers_the_slow_sources():
+    # threatcrowd is plain http in 4.11.1; the owner excluded it. One run hits
+    # every source and a timeout returns nothing, so the budget is 120 s.
+    assert "threatcrowd" not in domain.FREE_SOURCES
+    assert domain.HARVEST_TIMEOUT == 120
+    import inspect
+    assert inspect.signature(domain.run).parameters["timeout"].default == 120

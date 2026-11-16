@@ -54,10 +54,10 @@ HARVESTER_BIN = "theHarvester"
 #                    -> hostnames (rrname, CNAME targets) and A-record IPs
 #   subdomaincenter  added: api.subdomain.center -> list of subdomains
 #   thc              added: ip.thc.org subdomain download -> hostnames
-#   threatcrowd      added: ThreatCrowd domain report -> subdomains and
-#                    resolution IPs. Note: 4.11.1 calls it over plain http
-#                    (http://ci-www.threatcrowd.org), so the target domain
-#                    crosses the network unencrypted.
+#   threatcrowd      EXCLUDED (owner, 2026-11-16): keyless and passive, but
+#                    4.11.1 calls it over plain http (ci-www.threatcrowd.org),
+#                    so the target domain would cross the network
+#                    unencrypted; the service may also no longer be running.
 #   waybackarchive   added: web.archive.org CDX -> hostnames seen in
 #                    archived URLs
 #   shodanInternetDB EXCLUDED: keyless, but it first resolves the target
@@ -67,10 +67,13 @@ HARVESTER_BIN = "theHarvester"
 #                    third-party lookup. Also mixed-case, which
 #                    ``_validate_sources`` (lowercases input) can't match.
 HARVESTER_VERSION_CHECKED = "4.11.1"
+# One theHarvester run queries every source above; a timeout returns nothing
+# at all, so the budget must cover the slowest (thc can wait 60 s and retry).
+HARVEST_TIMEOUT = 120
 FREE_SOURCES = (
     "certspotter", "commoncrawl", "crtsh", "hackertarget", "otx",
-    "rapiddns", "robtex", "subdomaincenter", "thc", "threatcrowd",
-    "urlscan", "waybackarchive",
+    "rapiddns", "robtex", "subdomaincenter", "thc", "urlscan",
+    "waybackarchive",
 )
 
 
@@ -102,7 +105,7 @@ def _validate_domain(selector: str) -> str:
 
 
 @log_outcome
-def run(selector: str, timeout: int = 30, sources=None, **opts) -> AdapterResult:
+def run(selector: str, timeout: int = HARVEST_TIMEOUT, sources=None, **opts) -> AdapterResult:
     """Harvest a domain with theHarvester (free keyless sources only)."""
     try:
         domain = _validate_domain(selector)
@@ -176,7 +179,7 @@ def register(app) -> None:
     """Register the `domain_harvest` MCP tool."""
 
     @app.tool(name="domain_harvest")
-    def domain_harvest(selector: str, timeout: int = 30) -> dict:
+    def domain_harvest(selector: str, timeout: int = HARVEST_TIMEOUT) -> dict:
         """Harvest emails/hosts for a domain via theHarvester (free sources)."""
         res = run(selector, timeout=timeout)
         return {

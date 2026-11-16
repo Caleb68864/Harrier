@@ -260,8 +260,9 @@ def _person_sweep(
     # 3) Fan out under the concurrency cap + jitter. The runner's per-job budget
     #    must exceed each adapter's own timeout (username overall = 60s) so a
     #    completing tool isn't killed early and surfaced as a spurious error
-    #    (username overall budget = 90s, so the runner allows 105s).
-    raw = run_jobs_sync(jobs, max_concurrency=max_concurrency, timeout=105)
+    #    (username overall budget = 90s; domain harvest = 120s, so the runner
+    #    allows 135s).
+    raw = run_jobs_sync(jobs, max_concurrency=max_concurrency, timeout=135)
     rows = [_normalize(tool, result) for tool, result in raw]
     reasons = [_reason(result) for _, result in raw]
     _log_degraded(rows, reasons)
