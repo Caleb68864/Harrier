@@ -18,15 +18,28 @@ from harrier.schema import Finding
 
 # --- correlator ---------------------------------------------------------------
 
-def test_confidence_high_when_two_sources_agree():
+def test_confidence_high_when_two_independent_sources_agree():
     findings = [
         Finding(selector="a", source_tool="sherlock", value="github.com/a", exists=True),
-        Finding(selector="a", source_tool="maigret", value="github.com/a", exists=True),
+        Finding(selector="a", source_tool="theHarvester", value="github.com/a", exists=True),
     ]
     out = correlate(findings)
     assert all(f.confidence == "high" for f in out)
     # deduped to distinct sources
     assert len(out) == 2
+
+
+def test_same_family_tools_do_not_earn_high():
+    """O13: sherlock and maigret enumerate the same sites; holehe and
+    socialscan probe the same sign-up endpoints. Agreement is one observation."""
+    for a, b in (("sherlock", "maigret"), ("holehe", "socialscan")):
+        findings = [
+            Finding(selector="a", source_tool=a, value="github.com/a", exists=True),
+            Finding(selector="a", source_tool=b, value="github.com/a", exists=True),
+        ]
+        out = correlate(findings)
+        assert len(out) == 2  # both kept: they're still two tools' reports
+        assert all(f.confidence == "low" for f in out), (a, b)
 
 
 def test_confidence_low_when_single_source():

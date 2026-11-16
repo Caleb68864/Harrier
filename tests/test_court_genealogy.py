@@ -14,7 +14,7 @@ def test_court_parses_results(monkeypatch):
          "docketNumber": "8:19-cv-1"},
     ]}
     monkeypatch.setattr(court, "_fetch", lambda q, t: (200, payload))
-    res = court.run("Amanda Bennett", state="NE")
+    res = court.run("Amanda Bennett")
     assert res.status == "ok"
     assert len(res) == 1
     assert res[0].source_tool == "courtlistener"

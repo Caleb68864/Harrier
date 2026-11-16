@@ -69,3 +69,120 @@ def test_run_coro_sync_inline_and_in_loop():
         return run_coro_sync(lambda: _echo(7))
 
     assert asyncio.run(main()) == 7
+
+
+# --- O2: a runner timeout must stop the work, not just the wait -------------
+
+import os
+import sys
+import time
+
+import pytest
+
+from harrier.adapters import run_subprocess
+from harrier.runner import JobBudget, _JOB_BUDGET, job_remaining, run_jobs
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:  # a zombie is dead for our purposes
+        with open(f"/proc/{pid}/stat") as fh:
+            return fh.read().split(")")[-1].split()[0] != "Z"
+    except OSError:
+        return True
+
+
+def _wait_dead(pids, within=3.0) -> list[int]:
+    end = time.monotonic() + within
+    while time.monotonic() < end:
+        alive = [p for p in pids if _alive(p)]
+        if not alive:
+            return []
+        time.sleep(0.05)
+    return [p for p in pids if _alive(p)]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_timed_out_subprocess_and_its_children_are_killed(tmp_path):
+    pidfile = tmp_path / "pids"
+    # The tool starts a child of its own (like sherlock's workers would) and
+    # both would outlive the runner's 1s budget by a lot.
+    script = f'sleep 20 & echo $$ $! > {pidfile}; wait'
+
+    def job():
+        return run_subprocess(["sh", "-c", script], timeout=60)
+
+    async def main():
+        start = time.monotonic()
+        out = await run_jobs([("slow", job)], timeout=1, jitter=0)
+        elapsed = time.monotonic() - start
+        for _ in range(40):  # the shell writes its pids almost at once
+            if pidfile.exists() and pidfile.read_text().strip():
+                break
+            time.sleep(0.05)
+        pids = [int(p) for p in pidfile.read_text().split()]
+        # Checked BEFORE asyncio.run's executor shutdown can wait for the thread.
+        return out, elapsed, pids, _wait_dead(pids)
+
+    start = time.monotonic()
+    out, elapsed, pids, still_alive = asyncio.run(main())
+    total = time.monotonic() - start
+    assert isinstance(out[0][1], TimeoutError)
+    assert elapsed < 3
+    assert len(pids) == 2
+    assert still_alive == [], f"timed-out job left processes running: {still_alive}"
+    assert total < 5  # nothing kept the sync boundary waiting on the old job
+
+
+def test_job_remaining_reflects_the_job_deadline():
+    assert job_remaining(30) == 30  # outside a job: unchanged
+    token = _JOB_BUDGET.set(JobBudget(deadline=time.monotonic() + 2))
+    try:
+        assert 0 < job_remaining(30) <= 2
+        _JOB_BUDGET.get().cancel.set()
+        assert job_remaining(30) == 0
+    finally:
+        _JOB_BUDGET.reset(token)
+
+
+def test_people_search_navigation_is_capped_to_job_budget(monkeypatch):
+    from harrier.adapters import people_search
+
+    seen = {}
+
+    class Page:
+        def goto(self, url, timeout, **k):
+            seen["timeout"] = timeout
+
+            class R:
+                status = 200
+            return R()
+
+        def content(self):
+            return "<html></html>"
+
+    class Browser:
+        def new_context(self, **k):
+            return type("C", (), {"new_page": lambda self: Page()})()
+
+        def close(self):
+            pass
+
+    class PW:
+        chromium = type("Ch", (), {"launch": lambda self, **k: Browser()})()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    token = _JOB_BUDGET.set(JobBudget(deadline=time.monotonic() + 2))
+    try:
+        people_search._fetch(PW, "Jane Doe", None, "example.invalid")
+    finally:
+        _JOB_BUDGET.reset(token)
+    assert 0 < seen["timeout"] <= 2000

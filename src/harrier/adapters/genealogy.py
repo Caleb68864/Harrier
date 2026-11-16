@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlencode
 
-from harrier.adapters import AdapterResult, as_text, clamp_timeout
+from harrier.adapters import AdapterResult, as_text, clamp_timeout, log_outcome
 from harrier.schema import Finding
 
 TOOL = "familysearch"
@@ -32,6 +32,7 @@ def _manual_pointer() -> str:
             "FamilySearch link — free, just sign in.")
 
 
+@log_outcome
 def run(first: str, last: str, maiden: str | None = None,
         married: str | None = None, timeout: int = 15) -> AdapterResult:
     """Search FamilySearch records. Degrades to unavailable without a token. Never raises."""

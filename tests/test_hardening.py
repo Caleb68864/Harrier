@@ -7,7 +7,7 @@ import subprocess
 
 import harrier.adapters.court as court
 import harrier.adapters.genealogy as genealogy
-from harrier.adapters import domain, phone
+from harrier.adapters import domain, phone, username
 
 
 def _urlopen_returning(payload):
@@ -60,11 +60,11 @@ def test_domain_report_malformed_shapes(tmp_path):
     assert [f.value for f in res] == ["a@example.com"]
 
 
-def test_phone_json_non_string_carrier_does_not_raise():
+def test_phone_unexpected_output_does_not_raise():
+    # Drifted output (here JSON, which `scan` doesn't print in v2.11.0) must
+    # not raise; with no "Results for" section there is nothing to report.
     out = json.dumps({"result": {"carrier": {"name": "X"}, "country": 1}})
-    res = phone._parse(out, "+15555550100")
-    assert len(res) == 1
-    assert isinstance(res[0].value, str)
+    assert phone._parse(out, "+15555550100") == []
 
 
 # --- sweep sources[] carries the cause of degradation -------------------------
@@ -324,11 +324,11 @@ def test_run_subprocess_clamps_timeout(monkeypatch):
 
     seen = {}
 
-    def fake_run(args, **kw):
-        seen["timeout"] = kw["timeout"]
+    def fake_run(args, limit):
+        seen["timeout"] = limit
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    monkeypatch.setattr(adapters.subprocess, "run", fake_run)
+    monkeypatch.setattr(adapters, "_run_killable", fake_run)
     adapters.run_subprocess(["true"], timeout=0)
     assert seen["timeout"] == 1
     adapters.run_subprocess(["true"], timeout=99999)
@@ -494,3 +494,46 @@ def test_person_sweep_warns_on_unknown_depth(monkeypatch):
     assert "error" not in res
     assert res["warnings"] and "exhaustive" in res["warnings"][0]
     assert sweep.person_sweep("Amanda Bennett", depth="deep", permute=False)["warnings"] == []
+
+
+# --- O11: direct adapter calls leave a stderr (logging) trace on degradation --
+
+def test_adapters_log_degradation(monkeypatch, caplog):
+    import logging
+
+    from harrier.adapters import email, people_search
+
+    monkeypatch.setattr(phone, "binary_available", lambda n: False)
+    monkeypatch.setattr(username, "binary_available", lambda n: False)
+    with caplog.at_level(logging.INFO, logger="harrier.adapters"):
+        phone.run("+15555550100")
+        username.run("someone")
+        email.run("not-an-email")
+        people_search.run("Jane Doe", consent=False)
+    by_logger = {}
+    for r in caplog.records:
+        by_logger.setdefault(r.name, []).append(r)
+    phone_rec = by_logger["harrier.adapters.phone"][-1]
+    assert phone_rec.levelno == logging.WARNING
+    assert "status=unavailable" in phone_rec.getMessage()
+    assert "phoneinfoga binary not found" in phone_rec.getMessage()
+    assert any("status=unavailable" in r.getMessage()
+               for r in by_logger["harrier.adapters.username"])
+    assert any("sherlock not available" in r.getMessage()
+               for r in by_logger["harrier.adapters.username"])
+    assert "status=error" in by_logger["harrier.adapters.email"][-1].getMessage()
+    # blocked-by-design is not a degradation, and its reason quotes the name
+    assert "harrier.adapters.people_search" not in by_logger
+    assert not any("Jane Doe" in r.getMessage() for r in caplog.records)
+
+
+def test_healthy_adapter_call_logs_nothing(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(phone, "binary_available", lambda n: True)
+    monkeypatch.setattr(phone, "run_subprocess", lambda args, timeout=30:
+                        subprocess.CompletedProcess(args, 0,
+                                                    "Results for local\nCountry: US\n", ""))
+    with caplog.at_level(logging.INFO, logger="harrier.adapters"):
+        assert phone.run("+15555550100").status == "ok"
+    assert [r for r in caplog.records if r.name.startswith("harrier.adapters")] == []

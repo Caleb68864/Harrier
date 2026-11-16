@@ -75,3 +75,10 @@ def test_username_sweep_wrapper_matches_adapter_defaults(monkeypatch):
     monkeypatch.setattr(username, "run", fake_run)
     _call("username_sweep", {"selector": "amandab", "engine": "maigret"})
     assert seen["timeout"] == 60 and seen["engine"] == "maigret"
+
+
+def test_ignored_parameters_are_not_advertised():
+    """O8: court_search(state) and people_search(age) were accepted and ignored."""
+    tools = {t.name: t for t in asyncio.run(create_app().list_tools())}
+    assert "state" not in tools["court_search"].inputSchema["properties"]
+    assert "age" not in tools["people_search"].inputSchema["properties"]

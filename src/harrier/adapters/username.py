@@ -13,11 +13,13 @@ Missing binary / crash / bad selector → ``status="unavailable"`` (or
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import tempfile
 
 from harrier.adapters import (
+    log_outcome,
     AdapterResult,
     SelectorError,
     binary_available,
@@ -28,6 +30,7 @@ from harrier.adapters import (
 from harrier.schema import Finding
 
 TOOL = "username"
+log = logging.getLogger(__name__)
 SHERLOCK_BIN = "sherlock"
 MAIGRET_BIN = "maigret"
 
@@ -181,6 +184,7 @@ def _run_maigret(selector: str, timeout: int) -> AdapterResult | None:
     return _finish(findings, proc, "maigret")
 
 
+@log_outcome
 def run(
     selector: str, timeout: int = 60, per_site_timeout: int = 5,
     sites: list[str] | None = None, engine: str = "sherlock", **opts
@@ -207,10 +211,12 @@ def run(
     if engine == "maigret":
         result = _run_maigret(selector, timeout)
         if result is None:  # maigret absent → fall back to sherlock existence
+            log.info("maigret not available; falling back to sherlock")
             result = _run_sherlock(selector, timeout, per_site_timeout, site_list)
     else:
         result = _run_sherlock(selector, timeout, per_site_timeout, site_list)
         if result is None:
+            log.info("sherlock not available; falling back to maigret")
             result = _run_maigret(selector, timeout)
     if result is None:
         return AdapterResult(

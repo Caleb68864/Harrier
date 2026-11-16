@@ -23,6 +23,7 @@ import time
 from typing import Optional
 from urllib.parse import quote, urlencode
 
+from harrier.adapters import log_outcome
 from harrier.schema import Finding
 
 TOOL = "people_search"
@@ -74,10 +75,10 @@ def _looks_blocked(status: Optional[int], html: str) -> bool:
     return any(m in low for m in _BLOCK_MARKERS)
 
 
+@log_outcome
 def run(
     name: str,
     city_or_state: Optional[str] = None,
-    age: Optional[int] = None,
     consent: bool = False,
     site: str = DEFAULT_SITE,
     _sleep: bool = True,
@@ -89,6 +90,10 @@ def run(
     With ``consent=False`` no network call is made and the result is
     ``blocked``. With ``consent=True`` the scrape is attempted; the expected
     outcome today is a ``blocked`` Finding carrying a manual step.
+
+    There is no ``age`` filter: nothing would use it (the query is name +
+    city/state, and results aren't parsed yet), so accepting it misled the
+    calling agent (roadmap O8).
     """
     name = (name or "").strip()
     if not name:
@@ -161,13 +166,20 @@ def _fetch(sync_playwright, name, city_or_state, site):
     # name/city containing &, #, + or non-ASCII can't break the query string.
     url = f"https://www.{site}/results?" + urlencode(params, quote_via=quote)
 
+    # Inside a person_sweep job, never navigate past the job's own deadline:
+    # the runner can't kill this thread, so the browser must stop by itself.
+    from harrier.runner import job_remaining
+    nav_ms = int(job_remaining(30) * 1000)
+    if nav_ms <= 0:
+        return "ERROR", "runner job budget exhausted before the fetch"
+
     def _do():
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             ctx = browser.new_context(user_agent=_UA)
             page = ctx.new_page()
             try:
-                resp = page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                resp = page.goto(url, timeout=nav_ms, wait_until="domcontentloaded")
                 status = resp.status if resp else None
                 html = page.content()
             finally:
@@ -221,11 +233,10 @@ def register(app) -> None:
     def people_search(
         name: str,
         city_or_state: str | None = None,
-        age: int | None = None,
         consent: bool = False,
     ) -> dict:
         """Look up a person on a free people-search site (consent-gated scrape)."""
-        res = run(name, city_or_state=city_or_state, age=age, consent=consent)
+        res = run(name, city_or_state=city_or_state, consent=consent)
         return {
             "status": res["status"],
             "count": len(res["findings"]),
