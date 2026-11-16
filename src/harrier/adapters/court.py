@@ -42,8 +42,13 @@ def _fetch(query: str, timeout: int) -> tuple[int, dict | None]:
         return 0, None
 
 
-def run(name: str, state: str | None = None, timeout: int = 15) -> AdapterResult:
-    """Search CourtListener for a person by name. Never raises."""
+def run(name: str, timeout: int = 15) -> AdapterResult:
+    """Search CourtListener for a person by name. Never raises.
+
+    There is no ``state`` filter: CourtListener filters by court id, not by
+    state, and a state parameter that was accepted and then ignored misled the
+    calling agent (roadmap O8).
+    """
     name = (name or "").strip()
     if not name:
         return AdapterResult(status="error", tool=TOOL, reason="empty name")
@@ -98,9 +103,12 @@ def register(app) -> None:
     """Register the `court_search` MCP tool."""
 
     @app.tool(name="court_search")
-    def court_search(name: str, state: str | None = None) -> dict:
-        """Search CourtListener/RECAP federal court records for a person by name."""
-        res = run(name, state=state)
+    def court_search(name: str) -> dict:
+        """Search CourtListener/RECAP federal court records for a person by name.
+
+        Name only: results are not filtered by state.
+        """
+        res = run(name)
         return {
             "status": res.status,
             "count": len(res),

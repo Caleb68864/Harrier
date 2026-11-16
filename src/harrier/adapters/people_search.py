@@ -77,7 +77,6 @@ def _looks_blocked(status: Optional[int], html: str) -> bool:
 def run(
     name: str,
     city_or_state: Optional[str] = None,
-    age: Optional[int] = None,
     consent: bool = False,
     site: str = DEFAULT_SITE,
     _sleep: bool = True,
@@ -89,6 +88,10 @@ def run(
     With ``consent=False`` no network call is made and the result is
     ``blocked``. With ``consent=True`` the scrape is attempted; the expected
     outcome today is a ``blocked`` Finding carrying a manual step.
+
+    There is no ``age`` filter: nothing would use it (the query is name +
+    city/state, and results aren't parsed yet), so accepting it misled the
+    calling agent (roadmap O8).
     """
     name = (name or "").strip()
     if not name:
@@ -228,11 +231,10 @@ def register(app) -> None:
     def people_search(
         name: str,
         city_or_state: str | None = None,
-        age: int | None = None,
         consent: bool = False,
     ) -> dict:
         """Look up a person on a free people-search site (consent-gated scrape)."""
-        res = run(name, city_or_state=city_or_state, age=age, consent=consent)
+        res = run(name, city_or_state=city_or_state, consent=consent)
         return {
             "status": res["status"],
             "count": len(res["findings"]),

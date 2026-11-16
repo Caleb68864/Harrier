@@ -133,7 +133,7 @@ def _investigate(
         tool_calls.append(f"person_sweep(engine={engine},verify={verify})")
         all_findings.extend(sweep["findings"])
 
-        court = court_mod.run(name, state=state)
+        court = court_mod.run(name)
         tool_calls.append("court_search")
         all_findings.extend(list(court))
 
