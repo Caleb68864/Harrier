@@ -308,7 +308,13 @@ def _chromium_path():
               shutil.which("chromium-browser"), shutil.which("google-chrome")):
         if p and os.path.exists(p):
             return p
-    return None
+    try:  # Playwright's own build, if `playwright install chromium` was run
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            p = pw.chromium.executable_path
+        return p if p and os.path.exists(p) else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _playwright_ok():
