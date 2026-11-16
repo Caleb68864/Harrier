@@ -190,44 +190,63 @@ def test_redirect_hop_to_private_or_non_http_is_refused(monkeypatch):
         assert connected == [("93.184.216.34", 80)], bad
 
 
-def test_render_refuses_private_target_and_route_guard_aborts(monkeypatch):
+def test_render_refuses_private_target_and_router_aborts(monkeypatch):
     _resolve_to(monkeypatch, {"ok.example": ["93.184.216.34"]})
     assert verify._render_page("http://127.0.0.1/") is None
 
     class Route:
         def __init__(self, url):
-            self.request = type("R", (), {"url": url})()
+            self.request = type("R", (), {"url": url, "method": "GET",
+                                          "resource_type": "document",
+                                          "post_data_buffer": None,
+                                          "all_headers": lambda self: {}})()
             self.action = None
 
-        def continue_(self):
+        def continue_(self, **k):
             self.action = "continue"
 
-        def abort(self):
+        def abort(self, *a):
             self.action = "abort"
 
-    for url, want in (("https://ok.example/p", "continue"),
+        def fulfill(self, **k):
+            self.action = "fulfill"
+
+    ok = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: _FakeSock(ok))
+    router = verify._RenderRouter({}, deadline=None)
+    for url, want in (("http://ok.example/p", "fulfill"),
                       ("http://169.254.169.254/", "abort"),
                       ("http://localhost/", "abort")):
         r = Route(url)
-        verify._route_guard(r)
+        router(r)
         assert r.action == want, url
 
 
-def test_render_pins_main_host_in_chromium(monkeypatch):
+def test_render_gives_chromium_no_network_of_its_own(monkeypatch):
     import sys
     import types
 
     _resolve_to(monkeypatch, {"site.example": ["93.184.216.34"]})
+    connected = []
+    ok = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+    monkeypatch.setattr(socket, "create_connection",
+                        lambda addr, *a, **k: connected.append(addr) or _FakeSock(ok))
     launched = {}
 
     class Page:
-        def route(self, *a): pass
-        def goto(self, *a, **k): pass
+        def goto(self, *a, **k): launched["goto"] = a
         def wait_for_timeout(self, *a): pass
         def content(self): return "<html>ok</html>"
 
+    class Ctx:
+        def route(self, *a): launched["route"] = a
+        def route_web_socket(self, *a): launched["ws"] = a
+        def new_page(self): return Page()
+
     class Browser:
-        def new_context(self, **k): return types.SimpleNamespace(new_page=Page)
+        def new_context(self, **k):
+            launched["context"] = k
+            return Ctx()
         def close(self): pass
 
     class Chromium:
@@ -243,5 +262,13 @@ def test_render_pins_main_host_in_chromium(monkeypatch):
     fake = types.ModuleType("playwright.sync_api")
     fake.sync_playwright = PW
     monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
-    assert verify._render_page("https://site.example/p") == "<html>ok</html>"
-    assert "--host-resolver-rules=MAP site.example 93.184.216.34" in launched.get("args", [])
+    assert verify._render_page("http://site.example/p") == "<html>ok</html>"
+    args = launched.get("args", [])
+    assert "--host-resolver-rules=MAP * ~NOTFOUND" in args
+    assert any(a.startswith("--proxy-server=http://127.0.0.1:") for a in args)
+    assert "--proxy-bypass-list=<-loopback>" in args
+    assert launched["context"]["service_workers"] == "block"
+    assert isinstance(launched["route"][1], verify._RenderRouter)
+    assert "ws" in launched
+    # The main document was fetched by Harrier, from the checked address.
+    assert connected == [("93.184.216.34", 80)]

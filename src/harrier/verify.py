@@ -19,12 +19,15 @@ matches a *standalone* "wademan" (a real display name), not the handle echo.
 
 from __future__ import annotations
 
+import contextlib
 import http.client
 import ipaddress
 import re
 import socket
 import ssl
-from urllib.parse import urljoin, urlsplit
+import time
+import zlib
+from urllib.parse import urldefrag, urljoin, urlsplit
 
 from harrier.distinct import COMMON_SURNAMES
 from harrier.schema import Finding
@@ -91,9 +94,9 @@ def _resolve_public(host: str) -> str | None:
 def _is_public_http_url(url) -> bool:
     """http(s) URL whose host resolves ONLY to public addresses (SSRF guard).
 
-    Used as a pre-check (and by the Playwright route guard). The plain fetch
-    does not rely on it alone: :func:`_fetch` resolves once per hop and
-    connects to that pinned address.
+    Used as a pre-check. The fetch and the render do not rely on it alone:
+    :func:`_fetch` and :class:`_RenderRouter` resolve once and connect to the
+    address they checked.
     """
     return _pinned_target(url) is not None
 
@@ -190,29 +193,204 @@ def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str, str]:
     return 0, "", current  # too many redirects
 
 
-def _route_guard(route) -> None:
-    """Playwright route handler: abort any request to a non-public host."""
-    if _is_public_http_url(route.request.url):
-        route.continue_()
-    else:
-        route.abort()
+# --- Render path: Chromium never resolves or connects on its own (O1c) -------
+#
+# Every request the rendered page makes goes through _RenderRouter: Harrier
+# resolves the host once, checks every address, connects to the checked
+# address itself and hands the response to Chromium with route.fulfill. The
+# browser is also launched so it cannot reach the network directly: its
+# resolver answers nothing (MAP * ~NOTFOUND) and its proxy is a local port
+# that refuses connections. Requests routing can't see (WebRTC, Chromium's own
+# background traffic) therefore have nowhere to go.
+
+_RENDER_MAX_BODY = 5_000_000      # per response
+_RENDER_MAX_REQUESTS = 150        # per render
+_RENDER_SKIP_TYPES = {"image", "media", "font"}  # not needed to read page text
+_HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+               "proxy-connection", "te", "trailer", "trailers", "transfer-encoding",
+               "upgrade", "host", "content-length", "accept-encoding"}
+_DROP_RESPONSE_HEADERS = {"connection", "keep-alive", "transfer-encoding",
+                          "content-length", "content-encoding", "trailer", "upgrade"}
+
+
+def _decode_body(body: bytes, encoding: str | None) -> bytes | None:
+    """Undo gzip/deflate (we ask for identity, but servers don't always obey)."""
+    enc = (encoding or "").strip().lower()
+    if enc in ("", "identity"):
+        return body
+    try:
+        if enc in ("gzip", "x-gzip"):
+            return zlib.decompress(body, 16 + zlib.MAX_WBITS)
+        if enc == "deflate":
+            try:
+                return zlib.decompress(body)
+            except zlib.error:
+                return zlib.decompress(body, -zlib.MAX_WBITS)
+    except zlib.error:
+        return None
+    return None  # br/zstd/unknown: we can't hand Chromium a body we can't decode
+
+
+class _RenderRouter:
+    """Playwright route handler that serves every request from a pinned fetch.
+
+    ``pins`` maps hostname -> checked IP for this render. The first lookup of
+    a host is checked and then reused for every later request to that host,
+    so a DNS server that answers public and then private gets no second
+    chance. Anything refused is aborted; nothing is ever passed to Chromium's
+    own network stack (no ``route.continue_``).
+
+    Redirects are followed here, hop by hop, each hop checked and pinned:
+    Playwright calls a route handler only for the first request of a redirect
+    chain, so a 3xx handed back to Chromium would be followed by Chromium's
+    own network stack, unrouted.
+    """
+
+    def __init__(self, pins: dict[str, str], deadline: float | None,
+                 max_requests: int = _RENDER_MAX_REQUESTS):
+        self.pins = pins
+        self.deadline = deadline
+        self.remaining = max_requests
+        # Responses already fetched (the main document's redirect chain is
+        # followed before navigating), served once without a second request.
+        self.prefetched: dict[str, tuple[int, dict[str, str], bytes]] = {}
+
+    def _target(self, url: str) -> tuple[str, str, int, str] | None:
+        if not _is_http_url(url):
+            return None
+        try:
+            parts = urlsplit(url)
+            host, port = parts.hostname, parts.port
+        except ValueError:
+            return None
+        if not host:
+            return None
+        ip = self.pins.get(host)
+        if ip is None:
+            ip = _resolve_public(host)
+            if ip is None:
+                return None
+            self.pins[host] = ip
+        scheme = parts.scheme.lower()
+        return scheme, host, port or (443 if scheme == "https" else 80), ip
+
+    def __call__(self, route) -> None:
+        try:
+            result = self._serve(route.request)
+        except Exception:  # noqa: BLE001 — any failure: Chromium gets nothing
+            result = None
+        if result is None:
+            route.abort("blockedbyclient")
+            return
+        status, headers, body = result
+        route.fulfill(status=status, headers=headers, body=body)
+
+    def _serve(self, request):
+        if request.resource_type in _RENDER_SKIP_TYPES:
+            return None
+        key = urldefrag(request.url)[0]
+        if request.method == "GET" and key in self.prefetched:
+            return self.prefetched.pop(key)
+        headers = {k: v for k, v in request.all_headers().items()
+                   if not k.startswith(":") and k.lower() not in _HOP_BY_HOP}
+        result = self.fetch(request.method, request.url, headers,
+                            request.post_data_buffer)
+        return None if result is None else result[:3]
+
+    def fetch(self, method: str, url: str, headers: dict[str, str],
+              body: bytes | None):
+        """Follow redirects; ``(status, headers, body, final_url)`` or None."""
+        current = urldefrag(url)[0]
+        for _ in range(_MAX_REDIRECTS + 1):
+            result = self._fetch_one(method, current, headers, body)
+            if result is None:
+                return None
+            status, out, data = result
+            location = out.get("location")
+            if status not in _REDIRECT_CODES or not location:
+                return status, out, data, current
+            current = urldefrag(urljoin(current, location.strip()))[0]
+            if status == 303 or (status in (301, 302) and method == "POST"):
+                method, body = "GET", None
+                headers = {k: v for k, v in headers.items()
+                           if not k.lower().startswith("content-")}
+        return None  # too many redirects
+
+    def _fetch_one(self, method: str, url: str, headers: dict[str, str],
+                   body: bytes | None):
+        if self.remaining <= 0:
+            return None
+        timeout: float = _FETCH_TIMEOUT
+        if self.deadline is not None:
+            left = self.deadline - time.monotonic()
+            if left <= 0:
+                return None
+            timeout = min(timeout, left)
+        target = self._target(url)
+        if target is None:
+            return None
+        self.remaining -= 1
+        scheme, host, port, ip = target
+        parts = urlsplit(url)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+        send = dict(headers)
+        send["Accept-Encoding"] = "identity"
+        send["Connection"] = "close"
+        cls = _PinnedHTTPSConnection if scheme == "https" else _PinnedHTTPConnection
+        conn = cls(host, port, ip, timeout=timeout)
+        try:
+            conn.request(method, path, body=body, headers=send)
+            resp = conn.getresponse()
+            data = resp.read(_RENDER_MAX_BODY + 1)
+            if len(data) > _RENDER_MAX_BODY:
+                return None
+            data = _decode_body(data, resp.getheader("Content-Encoding"))
+            if data is None:
+                return None
+            out: dict[str, str] = {}
+            for k, v in resp.getheaders():
+                k = k.lower()
+                if k in _DROP_RESPONSE_HEADERS:
+                    continue
+                if k in out:
+                    out[k] += ("\n" if k == "set-cookie" else ", ") + v
+                else:
+                    out[k] = v
+            return resp.status, out, data
+        finally:
+            conn.close()
+
+
+def _closed_port() -> socket.socket:
+    """A bound, non-listening loopback socket: connecting to it is refused.
+
+    Used as Chromium's proxy, so any request that escapes routing fails.
+    Held open (bound) for the render so nothing else can take the port.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    return s
+
+
+def _close_websocket(ws) -> None:
+    """WebSockets are not served: never connect them to a server."""
+    with contextlib.suppress(Exception):
+        ws.close()
 
 
 def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
     """Render a page in headless Chromium (executes JS). None if unavailable/failed.
 
-    Refuses non-http(s) URLs: Chromium would happily open ``file://`` paths.
+    Refuses non-http(s) and non-public URLs: Chromium would happily open
+    ``file://`` paths. Chromium makes no connection of its own: every request
+    is fetched by :class:`_RenderRouter` over a pinned connection.
     """
     target = _pinned_target(url)
     if target is None:
         return None
     _, host, _, ip = target
-    # Pin the page's own host to the address we just checked, so Chromium's
-    # resolver can't be rebound to a private address for the main document.
-    # Other hosts (redirects, sub-resources) still go through _route_guard,
-    # which checks but cannot pin (roadmap O1c).
-    pin_ip = f"[{ip}]" if ":" in ip else ip
-    launch_args = [f"--host-resolver-rules=MAP {host} {pin_ip}"]
     try:
         from playwright.sync_api import sync_playwright
 
@@ -220,21 +398,45 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
     except Exception:  # noqa: BLE001 — browser lib absent
         return None
 
-    def _do() -> str:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=launch_args)
-            ctx = browser.new_context(user_agent=_UA)
-            page = ctx.new_page()
-            # SSRF guard per request: covers redirect hops and sub-resources,
-            # which the up-front URL check alone cannot see.
-            page.route("**/*", _route_guard)
-            try:
-                page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
-                page.wait_for_timeout(1500)  # let client-side JS populate
-                html = page.content()
-            finally:
-                browser.close()
-            return html
+    def _do() -> str | None:
+        dead = _closed_port()
+        try:
+            launch_args = [
+                # Chromium's resolver answers nothing...
+                "--host-resolver-rules=MAP * ~NOTFOUND",
+                # ...and its only route out is a port that refuses connections
+                # (loopback included: drop Chromium's implicit loopback bypass).
+                f"--proxy-server=http://127.0.0.1:{dead.getsockname()[1]}",
+                "--proxy-bypass-list=<-loopback>",
+                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+                "--disable-background-networking",
+                "--disable-component-update",
+            ]
+            router = _RenderRouter({host: ip}, deadline=time.monotonic() + timeout)
+            # Follow the main document's redirects here (each hop checked and
+            # pinned), then navigate straight to where they end, so the page
+            # has its real URL and Chromium never sees a redirect.
+            first = router.fetch("GET", url, {"User-Agent": _UA, "Accept": (
+                "text/html,application/xhtml+xml,*/*;q=0.8")}, None)
+            if first is None:
+                return None
+            status, headers, body, final_url = first
+            router.prefetched[final_url] = (status, headers, body)
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=launch_args)
+                try:
+                    ctx = browser.new_context(user_agent=_UA, service_workers="block")
+                    # Context-wide, so popups and frames are covered too.
+                    ctx.route("**/*", router)
+                    ctx.route_web_socket("**/*", _close_websocket)
+                    page = ctx.new_page()
+                    page.goto(final_url, timeout=timeout * 1000, wait_until="domcontentloaded")
+                    page.wait_for_timeout(1500)  # let client-side JS populate
+                    return page.content()
+                finally:
+                    browser.close()
+        finally:
+            dead.close()
 
     try:
         # Playwright's sync API refuses to run inside a running asyncio loop;
