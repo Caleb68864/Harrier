@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlencode
 
-from harrier.adapters import AdapterResult, as_text, clamp_timeout
+from harrier.adapters import AdapterResult, as_text, clamp_timeout, log_outcome
 from harrier.schema import Finding
 
 TOOL = "courtlistener"
@@ -42,6 +42,7 @@ def _fetch(query: str, timeout: int) -> tuple[int, dict | None]:
         return 0, None
 
 
+@log_outcome
 def run(name: str, timeout: int = 15) -> AdapterResult:
     """Search CourtListener for a person by name. Never raises.
 

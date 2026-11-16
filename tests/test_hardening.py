@@ -7,7 +7,7 @@ import subprocess
 
 import harrier.adapters.court as court
 import harrier.adapters.genealogy as genealogy
-from harrier.adapters import domain, phone
+from harrier.adapters import domain, phone, username
 
 
 def _urlopen_returning(payload):
@@ -494,3 +494,46 @@ def test_person_sweep_warns_on_unknown_depth(monkeypatch):
     assert "error" not in res
     assert res["warnings"] and "exhaustive" in res["warnings"][0]
     assert sweep.person_sweep("Amanda Bennett", depth="deep", permute=False)["warnings"] == []
+
+
+# --- O11: direct adapter calls leave a stderr (logging) trace on degradation --
+
+def test_adapters_log_degradation(monkeypatch, caplog):
+    import logging
+
+    from harrier.adapters import email, people_search
+
+    monkeypatch.setattr(phone, "binary_available", lambda n: False)
+    monkeypatch.setattr(username, "binary_available", lambda n: False)
+    with caplog.at_level(logging.INFO, logger="harrier.adapters"):
+        phone.run("+15555550100")
+        username.run("someone")
+        email.run("not-an-email")
+        people_search.run("Jane Doe", consent=False)
+    by_logger = {}
+    for r in caplog.records:
+        by_logger.setdefault(r.name, []).append(r)
+    phone_rec = by_logger["harrier.adapters.phone"][-1]
+    assert phone_rec.levelno == logging.WARNING
+    assert "status=unavailable" in phone_rec.getMessage()
+    assert "phoneinfoga binary not found" in phone_rec.getMessage()
+    assert any("status=unavailable" in r.getMessage()
+               for r in by_logger["harrier.adapters.username"])
+    assert any("sherlock not available" in r.getMessage()
+               for r in by_logger["harrier.adapters.username"])
+    assert "status=error" in by_logger["harrier.adapters.email"][-1].getMessage()
+    # blocked-by-design is not a degradation, and its reason quotes the name
+    assert "harrier.adapters.people_search" not in by_logger
+    assert not any("Jane Doe" in r.getMessage() for r in caplog.records)
+
+
+def test_healthy_adapter_call_logs_nothing(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(phone, "binary_available", lambda n: True)
+    monkeypatch.setattr(phone, "run_subprocess", lambda args, timeout=30:
+                        subprocess.CompletedProcess(args, 0,
+                                                    "Results for local\nCountry: US\n", ""))
+    with caplog.at_level(logging.INFO, logger="harrier.adapters"):
+        assert phone.run("+15555550100").status == "ok"
+    assert [r for r in caplog.records if r.name.startswith("harrier.adapters")] == []

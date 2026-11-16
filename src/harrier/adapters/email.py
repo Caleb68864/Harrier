@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-from harrier.adapters import AdapterResult, SelectorError
+from harrier.adapters import AdapterResult, SelectorError, log_outcome
 from harrier.schema import Finding
 
 TOOL = "email"
@@ -172,6 +172,7 @@ def _run_socialscan(email: str, errors: list[str] | None = None) -> list[Finding
     return findings
 
 
+@log_outcome
 def run(selector: str, **opts) -> AdapterResult:
     """Check an email across holehe + socialscan.
 

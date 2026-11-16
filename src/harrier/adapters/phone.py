@@ -29,6 +29,7 @@ import re
 import subprocess
 
 from harrier.adapters import (
+    log_outcome,
     AdapterResult,
     SelectorError,
     as_text,
@@ -54,6 +55,7 @@ def _normalize_phone(selector: str) -> str:
     return compact
 
 
+@log_outcome
 def run(selector: str, timeout: int = 30, **opts) -> AdapterResult:
     """Scan a phone number with PhoneInfoga if available."""
     try:

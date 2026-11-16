@@ -14,12 +14,14 @@ Shared plumbing lives here:
 
 from __future__ import annotations
 
+import functools
+import logging
 import os
 import shutil
 import signal
 import subprocess
 import time
-from typing import Iterable
+from typing import Any, Callable, Iterable
 
 from harrier.schema import Finding
 
@@ -94,6 +96,55 @@ class AdapterResult(list):
     @property
     def findings(self) -> list[Finding]:
         return list(self)
+
+
+# Statuses that are not a degradation (blocked = a manual step, by design).
+_HEALTHY = {"ok", "empty", "blocked"}
+
+
+def _outcome(result: Any) -> tuple[str | None, str | None]:
+    """``(status, reason)`` of an adapter return (AdapterResult or the
+    people_search dict)."""
+    if isinstance(result, AdapterResult):
+        return result.status, result.reason
+    if isinstance(result, dict):
+        reason = result.get("reason")
+        if not isinstance(reason, str):
+            reason = next((f.reason for f in result.get("findings") or []
+                           if getattr(f, "reason", None)), None)
+        return result.get("status"), reason
+    return None, None
+
+
+def log_outcome(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Log an adapter ``run()``'s degraded outcomes to ``harrier.adapters.<name>``.
+
+    Stdio MCP: stdout is the protocol channel, so this goes through logging
+    (stderr). error/unavailable/timeout log at WARNING; a healthy status that
+    still carries a reason (partial failure, rate limits) logs at INFO;
+    ``blocked`` (a manual step by design) is not logged. An exception escaping ``run()`` (a contract breach) is
+    logged and re-raised. Selectors are not logged.
+    """
+    log = logging.getLogger(fn.__module__)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            result = fn(*args, **kwargs)
+        except Exception:
+            log.exception("adapter raised (contract breach)")
+            raise
+        status, reason = _outcome(result)
+        if status is not None and status not in _HEALTHY:
+            log.warning("adapter degraded status=%s reason=%s", status,
+                        reason or "unspecified")
+        elif reason and status != "blocked":
+            # A blocked result's reason is the manual step, which quotes the
+            # searched name; it's by design, so leave it out of the log.
+            log.info("adapter note status=%s reason=%s", status, reason)
+        return result
+
+    return wrapper
 
 
 def binary_available(name: str) -> bool:

@@ -23,6 +23,7 @@ import time
 from typing import Optional
 from urllib.parse import quote, urlencode
 
+from harrier.adapters import log_outcome
 from harrier.schema import Finding
 
 TOOL = "people_search"
@@ -74,6 +75,7 @@ def _looks_blocked(status: Optional[int], html: str) -> bool:
     return any(m in low for m in _BLOCK_MARKERS)
 
 
+@log_outcome
 def run(
     name: str,
     city_or_state: Optional[str] = None,

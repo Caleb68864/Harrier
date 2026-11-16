@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 
 from harrier.adapters import (
+    log_outcome,
     AdapterResult,
     SelectorError,
     binary_available,
@@ -67,6 +68,7 @@ def _validate_domain(selector: str) -> str:
     return s.lower()
 
 
+@log_outcome
 def run(selector: str, timeout: int = 30, sources=None, **opts) -> AdapterResult:
     """Harvest a domain with theHarvester (free keyless sources only)."""
     try:
