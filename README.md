@@ -191,7 +191,7 @@ uv sync                 # create the venv and install locked deps
 uv run harrier-mcp
 ```
 
-The wrapped CLI tools (Sherlock, Maigret, theHarvester, PhoneInfoga, …) are optional at runtime — any that are missing simply degrade to `unavailable`. Install the ones you want on `PATH` (or as Python deps) to light up those dimensions. For the Playwright render fallback, install browsers once with `uv run playwright install chromium`.
+The wrapped CLI tools (Sherlock, Maigret, theHarvester, PhoneInfoga, …) are optional at runtime — any that are missing simply degrade to `unavailable`. Install the ones you want on `PATH` (or as Python deps) to light up those dimensions. theHarvester is not usefully on PyPI (the `theHarvester` package there is a stale 0.0.1); install it from its GitHub release. Harrier's free, keyless source allowlist (`FREE_SOURCES` in `src/harrier/adapters/domain.py`) was checked against theHarvester 4.11.1. For the Playwright render fallback, install browsers once with `uv run playwright install chromium`.
 
 ## Registering with Claude Code
 

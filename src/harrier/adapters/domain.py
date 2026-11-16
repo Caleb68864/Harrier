@@ -5,8 +5,8 @@ sources. It has no stable pip entrypoint on this host, so if the `theHarvester`
 binary is absent the adapter degrades to ``status="unavailable"``. It never
 raises into the sweep.
 
-Invocation: ``theHarvester -d <domain> -b all -f <tmp.json>`` then parse the
-JSON report (``-f`` writes ``<name>.json``).
+Invocation: ``theHarvester -d <domain> -b <FREE_SOURCES> -f <tmp.json>`` then
+parse the JSON report (``-f`` writes ``<name>.json``). Never ``-b all``.
 """
 
 from __future__ import annotations
@@ -34,10 +34,18 @@ HARVESTER_BIN = "theHarvester"
 # ``-b all`` would include API-key / paid-tier modules (shodan, hunter, censys,
 # securitytrails, ...) and search-engine scrapers; pin an explicit allowlist so
 # the constraint holds by construction. Certificate-transparency + passive-DNS
-# sources that answer without a key. Re-check against the installed version.
+# sources that answer without a key.
+#
+# Checked against theHarvester 4.11.1 (GitHub release, 2026-06-03; the PyPI
+# "theHarvester" package is a stale 0.0.1 from 2019): every name below is in
+# ``Core.get_supportedengines()`` and needs no API key (hackertarget takes an
+# optional key but works without one). ``anubis`` and ``threatminer`` were
+# dropped: 4.11.1 has no such modules, and theHarvester rejects the whole
+# ``-b`` list ("Invalid source", exit 1) if any one name is unknown. Names are
+# matched case-sensitively. Re-check when moving to another version.
+HARVESTER_VERSION_CHECKED = "4.11.1"
 FREE_SOURCES = (
-    "anubis", "certspotter", "crtsh", "hackertarget", "otx", "rapiddns",
-    "threatminer", "urlscan",
+    "certspotter", "crtsh", "hackertarget", "otx", "rapiddns", "urlscan",
 )
 
 
