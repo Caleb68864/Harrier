@@ -3,7 +3,7 @@
 **A disciplined free-source OSINT collection server for LLM agents.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-92%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](#testing)
 [![Protocol](https://img.shields.io/badge/MCP-FastMCP%20stdio-8A2BE2.svg)](#registering-with-claude-code)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](#license)
 
@@ -113,6 +113,12 @@ Enumeration false-positives are the enemy. The verification stage fetches a surf
 - fetch blocked or a JS shell → retry with an optional **Playwright render** (a real headless browser that executes JS); only if *that* still can't read it is the finding left `unverifiable` ("confirm manually").
 
 **Word-boundary matching** means a handle never self-corroborates: the profile page for `amandawademan` contains that concatenated handle, but `\bwademan\b` only matches a *standalone* "wademan" — a real display name — not the handle echo.
+
+**Network safety (SSRF guard).** Profile URLs come from third-party tool output, so verify treats them as hostile. Only `http(s)` is fetched or rendered. Each host is resolved once and *every* address it resolves to must be public (no loopback, private, link-local/cloud-metadata, CGNAT, multicast or reserved addresses); the connection then goes to that checked address, so a DNS server can't answer "public" for the check and "private" for the connect. Redirects are followed by Harrier, one checked hop at a time.
+
+The Playwright render follows the same rule for every request the page makes (the document, redirect targets, scripts, XHR on any host): Harrier fetches it over a pinned connection and hands the response to Chromium. Chromium itself is started with no usable network (its resolver answers nothing and its only proxy is a closed local port), so anything that escapes request routing fails instead of connecting. Images, media and fonts are not fetched, and WebSockets and service workers are refused; pages that need those to show their text will render incompletely.
+
+**Proxies are not supported in verify.** The plain fetch and the render connect directly from this host to the checked address. They ignore `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` (and the render overrides any system proxy). If this host can only reach the internet through a proxy, verify returns `unverifiable` for every finding. This is deliberate: a proxy resolves names itself, which would undo the address check. Other adapters (CourtListener, FamilySearch, holehe and the wrapped CLI tools) use their own HTTP clients and may honour proxy variables.
 
 ---
 
@@ -267,14 +273,14 @@ harrier/
 │       ├── people_search.py  # headless-browser people-search (consent-gated)
 │       ├── court.py          # CourtListener / RECAP
 │       └── genealogy.py      # FamilySearch
-└── tests/                    # 92 tests
+└── tests/                    # pytest suite (no internet access needed)
 ```
 
 ---
 
 ## Engineering quality
 
-- **~92 passing tests** covering the schema, every adapter, the runner, correlation, distinctiveness, verification, the sweep, the investigate loop, the tradecraft layer, and the entity graph.
+- **A pytest suite** covering the schema, every adapter, the runner, correlation, distinctiveness, verification and its SSRF guard, the sweep, the investigate loop, the tradecraft layer, and the entity graph.
 - **Loop-safe sync ↔ async boundary.** FastMCP invokes sync tool bodies while its own event loop is running, which makes a bare `asyncio.run` and Playwright's sync API raise. `run_in_thread` / `run_coro_sync` are the single choke point that offloads to a worker thread only when a loop is actually running — so the server (and the render fallback) behave correctly live, not just in tests.
 - **Selector validation** rejects shell metacharacters and path-traversal separators before any selector reaches a subprocess or a temp-file path; subprocesses always run with `shell=False` and list args.
 - **Bounded, concurrent external calls** with a semaphore cap, per-job timeouts, and jitter.
@@ -283,9 +289,11 @@ harrier/
 ## Testing
 
 ```bash
-uv run pytest          # 92 passing
+uv run pytest          # full suite
 uv run pytest -q       # quiet
 ```
+
+The suite uses fakes, fixtures and local loopback servers; it makes no lookups on the internet. One render test drives a real Chromium against those local servers when one is available (Playwright's, a system `chromium`, or the path in `HARRIER_TEST_CHROMIUM`) and is skipped otherwise. Run `uv run pytest -q` for the current count rather than trusting a number in this file.
 
 ---
 
