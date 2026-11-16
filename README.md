@@ -93,7 +93,7 @@ Adapters are blocking (subprocess / requests / Playwright), so each job runs in 
 
 ### Cross-source correlation
 
-**Confidence is earned, never assumed.** Findings are grouped by a normalized key; a claim confirmed by **≥2 independent source tools** is promoted to `high`, a single-source claim stays `low`. Intra-tool duplicates are dropped; `blocked` findings pass through untouched (a manual step is not a confirmed claim).
+**Confidence is earned, never assumed.** Findings are grouped by a normalized key; a claim confirmed by **≥2 independent evidence families** is promoted to `high`, a single-family claim stays `low`. Tools that probe the same sites the same way count as one family (sherlock + maigret; holehe + socialscan), so their agreement alone doesn't earn `high`. Intra-tool duplicates are dropped; `blocked` findings pass through untouched (a manual step is not a confirmed claim).
 
 ### Distinctiveness scoring
 
@@ -250,7 +250,7 @@ harrier/
 │   ├── schema.py             # the normalized Finding contract (Pydantic)
 │   ├── candidates.py         # name → ranked handle/email permutations
 │   ├── distinct.py           # handle-distinctiveness scoring
-│   ├── correlate.py          # cross-source confidence (≥2 tools → high)
+│   ├── correlate.py          # cross-source confidence (≥2 evidence families → high)
 │   ├── runner.py             # concurrency-capped async fan-out + loop-safe boundary
 │   ├── sweep.py              # person_sweep orchestrator
 │   ├── verify.py             # fetch + Playwright-render verification stage
