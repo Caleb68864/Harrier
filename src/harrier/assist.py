@@ -18,7 +18,44 @@ Highest-yield for a maiden-name case (per the research): FamilySearch + obituari
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from urllib.parse import quote, quote_plus
+
+_US_STATES = {
+    "alabama": "al", "alaska": "ak", "arizona": "az", "arkansas": "ar",
+    "california": "ca", "colorado": "co", "connecticut": "ct", "delaware": "de",
+    "district of columbia": "dc", "florida": "fl", "georgia": "ga", "hawaii": "hi",
+    "idaho": "id", "illinois": "il", "indiana": "in", "iowa": "ia", "kansas": "ks",
+    "kentucky": "ky", "louisiana": "la", "maine": "me", "maryland": "md",
+    "massachusetts": "ma", "michigan": "mi", "minnesota": "mn", "mississippi": "ms",
+    "missouri": "mo", "montana": "mt", "nebraska": "ne", "nevada": "nv",
+    "new hampshire": "nh", "new jersey": "nj", "new mexico": "nm", "new york": "ny",
+    "north carolina": "nc", "north dakota": "nd", "ohio": "oh", "oklahoma": "ok",
+    "oregon": "or", "pennsylvania": "pa", "rhode island": "ri",
+    "south carolina": "sc", "south dakota": "sd", "tennessee": "tn", "texas": "tx",
+    "utah": "ut", "vermont": "vt", "virginia": "va", "washington": "wa",
+    "west virginia": "wv", "wisconsin": "wi", "wyoming": "wy",
+}
+_STATE_CODES = set(_US_STATES.values())
+
+
+def _state_code(state: str | None) -> str | None:
+    """Two-letter lowercase US state code from a code or a full name, else None."""
+    s = re.sub(r"[^a-z ]", "", (state or "").strip().lower().replace(".", ""))
+    s = re.sub(r"\s+", " ", s).strip()
+    if s in _STATE_CODES:
+        return s
+    return _US_STATES.get(s)
+
+
+def _slug(text: str) -> str:
+    """URL slug: ASCII, lowercase, apostrophes/periods dropped, other
+    punctuation and spaces collapsed to single hyphens (``St. Mary's`` ->
+    ``st-marys``)."""
+    ascii_text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
+    t = re.sub(r"['\u2019.]", "", ascii_text.lower())
+    return re.sub(r"[^a-z0-9]+", "-", t).strip("-")
 
 
 def _g(query: str) -> str:
@@ -81,11 +118,15 @@ def manual_assist_links(
         True,
         "Cloudflare-blocked to automation (see docs/ss04-spike-evidence.md). Open "
         "in YOUR browser — address history, relatives, phone, AKA surnames.")
-    if first and last:
-        slug = f"{first}-{last}".lower()
-        locslug = f"_{city.replace(' ', '-')}-{state}".lower() if (city and state) else ""
+    slug = "-".join(p for p in (_slug(first), _slug(last)) if p) if (first and last) else ""
+    if slug:
+        # Their path is /name/<first>-<last>_<city>-<st>. A location that can't
+        # be put in that form (no city, or a state we can't map to a code) is
+        # left off rather than producing a URL that finds nothing.
+        city_slug, st = _slug(city or ""), _state_code(state)
+        locslug = f"_{city_slug}-{st}" if (city_slug and st) else ""
         add("people-search", "FastPeopleSearch",
-            f"https://www.fastpeoplesearch.com/name/{quote(slug)}{quote(locslug)}",
+            f"https://www.fastpeoplesearch.com/name/{quote(slug + locslug)}",
             True, "Same data class as TruePeopleSearch; also Cloudflare-walled to bots.")
 
     # --- Courts / legal (name-change & divorce = maiden-name leads) ------------

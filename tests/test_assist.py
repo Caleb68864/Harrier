@@ -37,3 +37,21 @@ def test_identity_categories_present():
 def test_pure_function_returns_dicts():
     links = manual_assist_links("Jane Doe")
     assert isinstance(links, list) and all(isinstance(x, dict) for x in links)
+
+
+def _fps(**kw):
+    links = manual_assist_links(**kw)
+    return next(x["url"] for x in links if x["site"] == "FastPeopleSearch")
+
+
+def test_fastpeoplesearch_slug_is_normalized():
+    """O16: full state names and punctuation used to go straight into the slug."""
+    base = "https://www.fastpeoplesearch.com/name/"
+    assert _fps(name="Mary O'Brien", city="St. Paul", state="Minnesota") == \
+        base + "mary-obrien_st-paul-mn"
+    assert _fps(name="José Núñez", city="San  Antonio", state="TX") == \
+        base + "jose-nunez_san-antonio-tx"
+    assert _fps(name="Ann Lee", city="Omaha", state="N.E.") == base + "ann-lee_omaha-ne"
+    # unmappable state -> no location part, not a malformed one
+    assert _fps(name="Ann Lee", city="Omaha", state="Atlantis") == base + "ann-lee"
+    assert _fps(name="Ann Lee", city="Omaha") == base + "ann-lee"
