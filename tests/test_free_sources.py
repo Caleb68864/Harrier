@@ -33,3 +33,46 @@ def test_domain_refuses_non_free_sources(monkeypatch):
         assert "free keyless" in res.reason
     assert called == []
     assert domain._validate_sources("crtsh, OTX") == "crtsh,otx"
+
+
+# theHarvester 4.11.1's ``Core.get_supportedengines()``, copied verbatim.
+# theHarvester refuses the whole ``-b`` list if one name is not in here.
+_HARVESTER_4_11_1_ENGINES = frozenset({
+    "baidu", "bevigil", "bitbucket", "bufferoverun", "builtwith", "brave",
+    "censys", "certspotter", "chaos", "commoncrawl", "criminalip", "crtsh",
+    "dehashed", "dnsdumpster", "duckduckgo", "dymo", "fofa", "fullhunt",
+    "github-code", "gitlab", "hackertarget", "haveibeenpwned", "hudsonrock",
+    "hunter", "hunterhow", "intelx", "leakix", "leaklookup", "linkedin",
+    "linkedin_links", "mojeek", "netcraft", "netlas", "omnisint", "onyphe",
+    "otx", "pentesttools", "projectdiscovery", "rapiddns", "robtex",
+    "rocketreach", "securityscorecard", "securityTrails", "sherlockeye",
+    "shodan", "shodanInternetDB", "subdomaincenter", "subdomainfinderc99",
+    "sublist3r", "thc", "threatcrowd", "tomba", "urlscan", "venacus",
+    "virustotal", "waybackarchive", "whoisxml", "windvane", "yahoo",
+    "zoomeye", "zoomeyeapi",
+})
+# Modules in 4.11.1 that need an API key (api-keys.yaml / README), except
+# hackertarget, whose key is optional.
+_HARVESTER_4_11_1_KEYED = frozenset({
+    "bevigil", "bitbucket", "brave", "bufferoverun", "builtwith", "censys",
+    "criminalip", "dehashed", "dnsdumpster", "dymo", "fofa", "fullhunt",
+    "github-code", "haveibeenpwned", "hunter", "hunterhow", "intelx",
+    "leakix", "leaklookup", "mojeek", "netlas", "onyphe", "pentesttools",
+    "projectdiscovery", "rocketreach", "securityscorecard", "securityTrails",
+    "sherlockeye", "shodan", "tomba", "venacus", "virustotal", "whoisxml",
+    "windvane", "zoomeye",
+})
+
+
+def test_free_sources_pinned_to_checked_harvester_version():
+    # Changing the list (or the version) means re-checking it against a real
+    # theHarvester: see the comment above FREE_SOURCES.
+    assert domain.HARVESTER_VERSION_CHECKED == "4.11.1"
+    assert domain.FREE_SOURCES == (
+        "certspotter", "crtsh", "hackertarget", "otx", "rapiddns", "urlscan",
+    )
+    assert set(domain.FREE_SOURCES) <= _HARVESTER_4_11_1_ENGINES
+    assert not set(domain.FREE_SOURCES) & _HARVESTER_4_11_1_KEYED
+    # Removed upstream; an unknown name makes theHarvester reject the run.
+    assert "anubis" not in domain.FREE_SOURCES
+    assert "threatminer" not in domain.FREE_SOURCES
