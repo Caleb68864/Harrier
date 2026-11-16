@@ -133,3 +133,38 @@ def test_precheck_ignores_reason_text(monkeypatch):
                 exists=True, confidence="low", reason="found Wademan mention")
     verify_finding(f, ANCHOR, render_fn=None)
     assert f.raw["verify"]["verdict"] == "false_positive"
+
+
+# --- O6: a redirect away from the profile is not a live profile -------------
+
+def _fetch_final(final, status=200, body="<title>Welcome</title> amandawademan"):
+    return lambda url, timeout=10: (status, body, final)
+
+
+def test_redirect_to_homepage_is_false_positive(monkeypatch):
+    monkeypatch.setattr(verify, "_fetch", _fetch_final("https://site/"))
+    f = verify_finding(_f(), ANCHOR)
+    assert f.exists is False
+    assert f.raw["verify"]["verdict"] == "false_positive"
+    assert f.raw["verify"]["final_url"] == "https://site/"
+
+
+def test_redirect_to_login_is_unverifiable_and_not_rendered(monkeypatch):
+    monkeypatch.setattr(verify, "_fetch",
+                        _fetch_final("https://site/login?next=/amandawademan",
+                                     body="<title>Log in</title> Wademan Nebraska"))
+    rendered = []
+    f = verify_finding(_f(), ANCHOR, render_fn=lambda u: rendered.append(u) or "<p>x</p>")
+    assert f.raw["verify"]["verdict"] == "unverifiable"
+    assert f.raw["verify"]["redirected"] is True
+    assert f.confidence == "medium"  # neither promoted nor demoted
+    assert rendered == []
+
+
+def test_cosmetic_redirects_still_classify_normally(monkeypatch):
+    body = "<title>Amanda Wademan</title> Nebraska"
+    for final in ("https://www.site/amandawademan/", "http://site/AmandaWademan",
+                  "https://site/users/amandawademan"):
+        monkeypatch.setattr(verify, "_fetch", _fetch_final(final, body=body))
+        f = verify_finding(_f(), ANCHOR)
+        assert f.raw["verify"]["verdict"] == "corroborated", final

@@ -353,6 +353,40 @@ def _precheck_metadata(finding: Finding, anchor: dict) -> bool:
     return True
 
 
+def _url_key(url: str) -> tuple[str, str]:
+    """(host without www., lowercased path without trailing slash)."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host, parts.path.lower().rstrip("/")
+
+
+def _redirect_kind(requested: str, final: str | None, selector: str | None) -> str | None:
+    """How a redirect changed the page: None (same profile), "root" (sent to
+    the site's homepage: the profile is gone) or "away" (sent somewhere else,
+    such as a login or search page: can't tell from here).
+
+    Scheme, ``www.``, letter case and a trailing slash don't count as a
+    change, and neither does a redirect whose path still names the handle.
+    """
+    if not final or final == requested:
+        return None
+    try:
+        req_host, req_path = _url_key(requested)
+        fin_host, fin_path = _url_key(final)
+    except ValueError:
+        return "away"
+    if (req_host, req_path) == (fin_host, fin_path):
+        return None
+    handle = re.sub(r"[^a-z0-9]", "", (selector or "").lower())
+    if not handle:
+        handle = re.sub(r"[^a-z0-9]", "", req_path.rsplit("/", 1)[-1])
+    if handle and handle in re.sub(r"[^a-z0-9]", "", fin_path):
+        return None
+    return "root" if not fin_path else "away"
+
+
 def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT,
                    render_fn=None) -> Finding:
     """Fetch (and optionally render) a finding's profile; update it (in place)."""
@@ -371,6 +405,32 @@ def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT
         return finding
     fetched = _fetch(finding.url, timeout)
     status, body = fetched[0], fetched[1]
+    final_url = fetched[2] if len(fetched) > 2 else finding.url
+
+    # A deleted profile often redirects (to the homepage, a login page, a
+    # search page) and the final page answers 200. That is not a live profile.
+    moved = _redirect_kind(finding.url, final_url, finding.selector) \
+        if 200 <= status < 300 else None
+    if moved == "root":
+        finding.exists = False
+        finding.confidence = "low"
+        finding.reason = (f"verify: redirected to the site homepage ({final_url}) "
+                          "— profile not found (enumeration false positive)")
+        raw["verify"] = {"status": status, "verdict": "false_positive",
+                         "rendered": False, "final_url": final_url}
+        finding.raw = raw
+        return finding
+    if moved == "away":
+        # Not proof of deletion (some sites send anonymous visitors to a
+        # login page), but the page we got is not the profile. A render would
+        # follow the same redirect, so don't try one.
+        raw["verify"] = {"status": status, "verdict": "unverifiable",
+                         "rendered": False, "final_url": final_url,
+                         "redirected": True}
+        finding.reason = (finding.reason + " · " if finding.reason else "") + \
+            f"verify: redirected away from the profile to {final_url} — confirm manually"
+        finding.raw = raw
+        return finding
 
     if status in _DEAD_STATUSES:
         finding.exists = False
