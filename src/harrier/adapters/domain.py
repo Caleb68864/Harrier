@@ -43,9 +43,34 @@ HARVESTER_BIN = "theHarvester"
 # dropped: 4.11.1 has no such modules, and theHarvester rejects the whole
 # ``-b`` list ("Invalid source", exit 1) if any one name is unknown. Names are
 # matched case-sensitively. Re-check when moving to another version.
+#
+# Second pass (4.11.1 source, ``theHarvester/discovery/*.py`` and the
+# dispatch in ``__main__.py``). Each module below reads no key (none appears
+# in ``api-keys.yaml`` or calls ``Core.*_key()``) and only queries a
+# third-party dataset; nothing is sent to the target's own hosts:
+#   commoncrawl      added: index.commoncrawl.org CDX (3 fixed 2023-24
+#                    indexes) -> hostnames seen in crawled URLs
+#   robtex           added: freeapi.robtex.com passive DNS forward/reverse
+#                    -> hostnames (rrname, CNAME targets) and A-record IPs
+#   subdomaincenter  added: api.subdomain.center -> list of subdomains
+#   thc              added: ip.thc.org subdomain download -> hostnames
+#   threatcrowd      added: ThreatCrowd domain report -> subdomains and
+#                    resolution IPs. Note: 4.11.1 calls it over plain http
+#                    (http://ci-www.threatcrowd.org), so the target domain
+#                    crosses the network unencrypted.
+#   waybackarchive   added: web.archive.org CDX -> hostnames seen in
+#                    archived URLs
+#   shodanInternetDB EXCLUDED: keyless, but it first resolves the target
+#                    with ``socket.getaddrinfo`` (a live DNS lookup that
+#                    reaches the target's nameservers) before asking
+#                    internetdb.shodan.io about each IP. Not a pure
+#                    third-party lookup. Also mixed-case, which
+#                    ``_validate_sources`` (lowercases input) can't match.
 HARVESTER_VERSION_CHECKED = "4.11.1"
 FREE_SOURCES = (
-    "certspotter", "crtsh", "hackertarget", "otx", "rapiddns", "urlscan",
+    "certspotter", "commoncrawl", "crtsh", "hackertarget", "otx",
+    "rapiddns", "robtex", "subdomaincenter", "thc", "threatcrowd",
+    "urlscan", "waybackarchive",
 )
 
 

@@ -69,10 +69,17 @@ def test_free_sources_pinned_to_checked_harvester_version():
     # theHarvester: see the comment above FREE_SOURCES.
     assert domain.HARVESTER_VERSION_CHECKED == "4.11.1"
     assert domain.FREE_SOURCES == (
-        "certspotter", "crtsh", "hackertarget", "otx", "rapiddns", "urlscan",
+        "certspotter", "commoncrawl", "crtsh", "hackertarget", "otx",
+        "rapiddns", "robtex", "subdomaincenter", "thc", "threatcrowd",
+        "urlscan", "waybackarchive",
     )
     assert set(domain.FREE_SOURCES) <= _HARVESTER_4_11_1_ENGINES
     assert not set(domain.FREE_SOURCES) & _HARVESTER_4_11_1_KEYED
     # Removed upstream; an unknown name makes theHarvester reject the run.
     assert "anubis" not in domain.FREE_SOURCES
     assert "threatminer" not in domain.FREE_SOURCES
+    # Keyless but resolves the target itself before querying (not purely
+    # passive); see the comment above FREE_SOURCES.
+    assert "shodanInternetDB" not in domain.FREE_SOURCES
+    # _validate_sources lowercases input, so every entry must be lowercase.
+    assert all(s == s.lower() for s in domain.FREE_SOURCES)
