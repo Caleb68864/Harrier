@@ -19,12 +19,12 @@ matches a *standalone* "wademan" (a real display name), not the handle echo.
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import re
 import socket
-import urllib.error
-import urllib.request
-from urllib.parse import urlsplit
+import ssl
+from urllib.parse import urljoin, urlsplit
 
 from harrier.distinct import COMMON_SURNAMES
 from harrier.schema import Finding
@@ -70,61 +70,124 @@ def _ip_is_public(addr: str) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-def _is_public_http_url(url) -> bool:
-    """http(s) URL whose host resolves ONLY to public addresses (SSRF guard).
+def _resolve_public(host: str) -> str | None:
+    """Resolve ``host`` once; return one address iff EVERY record is public.
 
     Every resolved address must be public: a host with any private/loopback/
-    link-local A/AAAA record is refused. Resolution failure is refused too.
-    Note: a DNS-rebinding race between this check and the connect remains
-    possible (tracked in docs/ROADMAP.md).
+    link-local A/AAAA record is refused, and so is a resolution failure. The
+    returned address is the one :func:`_fetch` connects to, so the address
+    that was checked is the address that is used (no DNS-rebinding window).
     """
-    if not _is_http_url(url):
-        return False
-    try:
-        host = urlsplit(url).hostname
-    except ValueError:
-        return False
-    if not host:
-        return False
     try:
         infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except (socket.gaierror, UnicodeError, OSError):
-        return False
-    addrs = {info[4][0] for info in infos}
-    return bool(addrs) and all(_ip_is_public(a) for a in addrs)
+        return None
+    addrs = [info[4][0] for info in infos]
+    if not addrs or not all(_ip_is_public(a) for a in addrs):
+        return None
+    return addrs[0].split("%", 1)[0]
 
 
-class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Re-apply the scheme + public-host check on EVERY redirect hop."""
+def _is_public_http_url(url) -> bool:
+    """http(s) URL whose host resolves ONLY to public addresses (SSRF guard).
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not _is_public_http_url(newurl):
-            raise urllib.error.HTTPError(
-                newurl, 0, "redirect to non-public or non-http(s) URL refused",
-                headers, fp)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-_OPENER = urllib.request.build_opener(_GuardedRedirectHandler)
-
-
-def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str]:
-    """Plain GET; return (status, text). status 0 on network error.
-
-    Only http/https is fetched — a finding URL is provider-derived but untrusted,
-    so refuse file://, ftp://, gopher:// etc. (SSRF / local-file surface).
+    Used as a pre-check (and by the Playwright route guard). The plain fetch
+    does not rely on it alone: :func:`_fetch` resolves once per hop and
+    connects to that pinned address.
     """
-    if not _is_public_http_url(url):
-        return 0, ""
-    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    return _pinned_target(url) is not None
+
+
+def _pinned_target(url) -> tuple[str, str, int, str] | None:
+    """``(scheme, host, port, ip)`` for a fetchable URL, else None."""
+    if not _is_http_url(url):
+        return None
     try:
-        with _OPENER.open(req, timeout=timeout) as resp:
+        parts = urlsplit(url)
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    ip = _resolve_public(host)
+    if ip is None:
+        return None
+    scheme = parts.scheme.lower()
+    return scheme, host, port or (443 if scheme == "https" else 80), ip
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection to a pre-validated IP; Host header keeps the hostname."""
+
+    def __init__(self, host, port, ip, **kw):
+        super().__init__(host, port, **kw)
+        self._pinned_ip = ip
+
+    def connect(self):
+        self.sock = socket.create_connection((self._pinned_ip, self.port),
+                                             self.timeout)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection to a pre-validated IP; SNI and certificate checks use
+    the hostname, so TLS still verifies the site we meant to reach."""
+
+    def __init__(self, host, port, ip, **kw):
+        kw.setdefault("context", ssl.create_default_context())
+        super().__init__(host, port, **kw)
+        self._pinned_ip = ip
+
+    def connect(self):
+        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+_MAX_REDIRECTS = 5
+_REDIRECT_CODES = {301, 302, 303, 307, 308}
+
+
+def _fetch(url: str, timeout: int = _FETCH_TIMEOUT) -> tuple[int, str, str]:
+    """Plain GET; return ``(status, text, final_url)``. status 0 on network error.
+
+    SSRF guard: only http(s) is fetched, and on EVERY hop (the first request
+    and each redirect) the host is resolved once, every address must be public,
+    and the connection goes to that checked address. A hostile DNS server can't
+    answer "public" for the check and "private" for the connect.
+    """
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        target = _pinned_target(current)
+        if target is None:
+            return 0, "", current
+        scheme, host, port, ip = target
+        parts = urlsplit(current)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+        cls = _PinnedHTTPSConnection if scheme == "https" else _PinnedHTTPConnection
+        conn = cls(host, port, ip, timeout=timeout)
+        try:
+            conn.request("GET", path, headers={"User-Agent": _UA,
+                                               "Accept": "*/*",
+                                               "Connection": "close"})
+            resp = conn.getresponse()
+            status = resp.status
+            if status in _REDIRECT_CODES:
+                location = resp.getheader("Location")
+                if not location:
+                    return status, "", current
+                current = urljoin(current, location.strip())
+                continue
+            if not 200 <= status < 300:
+                return status, "", current
             body = resp.read(200_000).decode("utf-8", "replace")
-            return getattr(resp, "status", 200) or 200, body
-    except urllib.error.HTTPError as exc:
-        return exc.code, ""
-    except Exception:  # noqa: BLE001 — any network failure is "unverifiable"
-        return 0, ""
+            return status, body, current
+        except Exception:  # noqa: BLE001 — any network failure is "unverifiable"
+            return 0, "", current
+        finally:
+            conn.close()
+    return 0, "", current  # too many redirects
 
 
 def _route_guard(route) -> None:
@@ -140,8 +203,16 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
 
     Refuses non-http(s) URLs: Chromium would happily open ``file://`` paths.
     """
-    if not _is_public_http_url(url):
+    target = _pinned_target(url)
+    if target is None:
         return None
+    _, host, _, ip = target
+    # Pin the page's own host to the address we just checked, so Chromium's
+    # resolver can't be rebound to a private address for the main document.
+    # Other hosts (redirects, sub-resources) still go through _route_guard,
+    # which checks but cannot pin (roadmap O1c).
+    pin_ip = f"[{ip}]" if ":" in ip else ip
+    launch_args = [f"--host-resolver-rules=MAP {host} {pin_ip}"]
     try:
         from playwright.sync_api import sync_playwright
 
@@ -151,7 +222,7 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
 
     def _do() -> str:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(headless=True, args=launch_args)
             ctx = browser.new_context(user_agent=_UA)
             page = ctx.new_page()
             # SSRF guard per request: covers redirect hops and sub-resources,
@@ -298,7 +369,8 @@ def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT
             "verify: non-http(s) URL refused — confirm manually"
         finding.raw = raw
         return finding
-    status, body = _fetch(finding.url, timeout)
+    fetched = _fetch(finding.url, timeout)
+    status, body = fetched[0], fetched[1]
 
     if status in _DEAD_STATUSES:
         finding.exists = False
