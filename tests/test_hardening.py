@@ -60,11 +60,11 @@ def test_domain_report_malformed_shapes(tmp_path):
     assert [f.value for f in res] == ["a@example.com"]
 
 
-def test_phone_json_non_string_carrier_does_not_raise():
+def test_phone_unexpected_output_does_not_raise():
+    # Drifted output (here JSON, which `scan` doesn't print in v2.11.0) must
+    # not raise; with no "Results for" section there is nothing to report.
     out = json.dumps({"result": {"carrier": {"name": "X"}, "country": 1}})
-    res = phone._parse(out, "+15555550100")
-    assert len(res) == 1
-    assert isinstance(res[0].value, str)
+    assert phone._parse(out, "+15555550100") == []
 
 
 # --- sweep sources[] carries the cause of degradation -------------------------
