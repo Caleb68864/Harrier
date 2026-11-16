@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import random
+import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
@@ -77,6 +78,26 @@ def job_cancelled() -> bool:
         budget.cancel.is_set() or time.monotonic() >= budget.deadline)
 
 
+def _as_job_timeout(exc: Exception, budget: JobBudget, timeout: float) -> Exception:
+    """Report a subprocess timeout caused by the job budget as a job timeout.
+
+    ``run_subprocess`` caps its own timeout to the job's remaining budget, so
+    its deadline lands on the same instant as ``wait_for``'s. Whichever fires
+    first wins: if the worker thread raises ``subprocess.TimeoutExpired`` just
+    before ``wait_for`` gives up, that exception would come back instead of
+    ``TimeoutError`` and the sweep would call a budget overrun an "error". Once
+    the job deadline has passed, a ``TimeoutExpired`` is the budget firing, so
+    it is reported as the same ``TimeoutError`` either way. A subprocess that
+    hit its own, shorter timeout well inside the budget keeps its type.
+    """
+    if isinstance(exc, subprocess.TimeoutExpired) and (
+            budget.cancel.is_set() or time.monotonic() >= budget.deadline):
+        err = TimeoutError(f"job exceeded its {timeout}s budget")
+        err.__cause__ = exc
+        return err
+    return exc
+
+
 async def run_jobs(
     jobs: Sequence[Job],
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
@@ -106,7 +127,7 @@ async def run_jobs(
                     asyncio.to_thread(fn), timeout=timeout
                 )
             except Exception as exc:  # noqa: BLE001 — surfaced, never raised out
-                return tool, exc
+                return tool, _as_job_timeout(exc, budget, timeout)
             finally:
                 # Timed out, failed or cancelled: tell anything still running
                 # in the worker thread to stop (a no-op if fn already returned).
