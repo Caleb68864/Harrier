@@ -80,7 +80,8 @@ import time
 import pytest
 
 from harrier.adapters import run_subprocess
-from harrier.runner import JobBudget, _JOB_BUDGET, job_remaining, run_jobs
+from harrier.runner import (JobBudget, _JOB_BUDGET, current_budget,
+                            job_remaining, run_jobs)
 
 
 def _alive(pid: int) -> bool:
@@ -135,6 +136,33 @@ def test_timed_out_subprocess_and_its_children_are_killed(tmp_path):
     assert len(pids) == 2
     assert still_alive == [], f"timed-out job left processes running: {still_alive}"
     assert total < 5  # nothing kept the sync boundary waiting on the old job
+
+
+def test_subprocess_timeout_from_the_job_budget_is_a_job_timeout():
+    """O19: run_subprocess's timeout is capped to the job budget, so it can
+    fire a hair before wait_for does. That must still read as the runner's
+    TimeoutError (sweep status "timeout"), not a TimeoutExpired ("error").
+    Forced deterministically: the job spends its budget, then raises."""
+    import subprocess
+
+    def job():
+        current_budget().deadline = time.monotonic() - 0.01  # budget spent
+        raise subprocess.TimeoutExpired(["tool"], 0.99)
+
+    [(_, result)] = asyncio.run(run_jobs([("slow", job)], timeout=30, jitter=0))
+    assert isinstance(result, TimeoutError)
+    assert isinstance(result.__cause__, subprocess.TimeoutExpired)
+
+
+def test_subprocess_own_short_timeout_keeps_its_type():
+    """A tool's own timeout well inside the job budget is not a job timeout."""
+    import subprocess
+
+    def job():
+        raise subprocess.TimeoutExpired(["tool"], 0.1)
+
+    [(_, result)] = asyncio.run(run_jobs([("t", job)], timeout=30, jitter=0))
+    assert type(result) is subprocess.TimeoutExpired
 
 
 def test_job_remaining_reflects_the_job_deadline():
