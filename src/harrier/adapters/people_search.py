@@ -161,13 +161,20 @@ def _fetch(sync_playwright, name, city_or_state, site):
     # name/city containing &, #, + or non-ASCII can't break the query string.
     url = f"https://www.{site}/results?" + urlencode(params, quote_via=quote)
 
+    # Inside a person_sweep job, never navigate past the job's own deadline:
+    # the runner can't kill this thread, so the browser must stop by itself.
+    from harrier.runner import job_remaining
+    nav_ms = int(job_remaining(30) * 1000)
+    if nav_ms <= 0:
+        return "ERROR", "runner job budget exhausted before the fetch"
+
     def _do():
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             ctx = browser.new_context(user_agent=_UA)
             page = ctx.new_page()
             try:
-                resp = page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                resp = page.goto(url, timeout=nav_ms, wait_until="domcontentloaded")
                 status = resp.status if resp else None
                 html = page.content()
             finally:

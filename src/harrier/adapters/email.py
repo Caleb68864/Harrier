@@ -83,15 +83,22 @@ def _run_holehe(email: str, errors: list[str] | None = None,
                                  return_exceptions=True)
         return results
 
+    from harrier.runner import job_remaining, run_coro_sync
+
+    # Inside a person_sweep job, stop at the job's deadline too: the runner
+    # can't kill this thread, so holehe has to end on its own.
+    budget = job_remaining(_HOLEHE_BUDGET)
+    if budget <= 0:
+        _note(errors, "holehe skipped: runner job budget exhausted")
+        return []
     try:
         # Loop-safe: works whether called from a worker thread (person_sweep
         # fan-out) or in-loop (the direct email_recon MCP tool). A bare
         # asyncio.run here would silently no-op in the running server loop.
-        from harrier.runner import run_coro_sync
         raw = run_coro_sync(
-            lambda: asyncio.wait_for(_gather(), timeout=_HOLEHE_BUDGET))
+            lambda: asyncio.wait_for(_gather(), timeout=budget))
     except (asyncio.TimeoutError, TimeoutError):
-        _note(errors, f"holehe exceeded its {_HOLEHE_BUDGET}s budget; no results")
+        _note(errors, f"holehe exceeded its {budget:.0f}s budget; no results")
         return []
     except Exception as exc:  # noqa: BLE001 — degrade to []
         _note(errors, f"holehe failed ({_exc_text(exc)})")

@@ -324,11 +324,11 @@ def test_run_subprocess_clamps_timeout(monkeypatch):
 
     seen = {}
 
-    def fake_run(args, **kw):
-        seen["timeout"] = kw["timeout"]
+    def fake_run(args, limit):
+        seen["timeout"] = limit
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    monkeypatch.setattr(adapters.subprocess, "run", fake_run)
+    monkeypatch.setattr(adapters, "_run_killable", fake_run)
     adapters.run_subprocess(["true"], timeout=0)
     assert seen["timeout"] == 1
     adapters.run_subprocess(["true"], timeout=99999)

@@ -14,8 +14,11 @@ Shared plumbing lives here:
 
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
+import time
 from typing import Iterable
 
 from harrier.schema import Finding
@@ -104,17 +107,62 @@ def run_subprocess(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> subproces
     Runs with ``shell=False`` always. Raises the usual subprocess exceptions
     (``FileNotFoundError``, ``TimeoutExpired``); adapters catch these and
     degrade. ``args`` MUST be a list.
+
+    Inside a runner job the timeout is also capped to the job's remaining
+    budget, and the process is killed as soon as the job is cancelled (the
+    runner gave up waiting), so a timed-out sweep leaves nothing running.
     """
     if not isinstance(args, list):  # guardrail: never accept a shell string
         raise SelectorError("subprocess args must be a list, never a shell string")
-    return subprocess.run(
+    from harrier.runner import job_remaining
+
+    return _run_killable(args, job_remaining(clamp_timeout(timeout)))
+
+
+_POLL = 0.1  # seconds between cancel checks
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill the tool and anything it spawned (it runs in its own session)."""
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def _run_killable(args: list[str], limit: float) -> subprocess.CompletedProcess:
+    """``subprocess.run`` that also stops when the current runner job is
+    cancelled, and kills the whole process group (not just the child)."""
+    from harrier.runner import job_cancelled
+
+    if limit <= 0:
+        raise subprocess.TimeoutExpired(args, 0)
+    proc = subprocess.Popen(
         args,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=clamp_timeout(timeout),
         shell=False,
-        check=False,
+        start_new_session=(os.name == "posix"),
     )
+    deadline = time.monotonic() + limit
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            try:
+                out, err = proc.communicate(timeout=max(0.01, min(_POLL, left)))
+                break
+            except subprocess.TimeoutExpired:
+                if job_cancelled() or time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(args, limit) from None
+    except BaseException:
+        _kill_tree(proc)
+        proc.communicate()  # reap; pipes close once the group is dead
+        raise
+    return subprocess.CompletedProcess(args, proc.returncode, out, err)
 
 
 def as_text(value) -> str | None:
