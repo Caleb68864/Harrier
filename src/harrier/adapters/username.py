@@ -98,7 +98,7 @@ def _run_sherlock(
         try:
             proc = run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return AdapterResult(status="unavailable", tool="sherlock",
+            return AdapterResult(status="timeout", tool="sherlock",
                                  reason="sherlock timed out")
         except (FileNotFoundError, OSError):
             return None
@@ -167,7 +167,7 @@ def _run_maigret(selector: str, timeout: int) -> AdapterResult | None:
         try:
             proc = run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return AdapterResult(status="unavailable", tool="maigret",
+            return AdapterResult(status="timeout", tool="maigret",
                                  reason="maigret timed out")
         except (FileNotFoundError, OSError):
             return None

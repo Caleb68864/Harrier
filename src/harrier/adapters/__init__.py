@@ -5,6 +5,8 @@ its tool's output into :class:`~harrier.schema.Finding` objects. The cardinal
 rule (spec A-2 / graceful degradation): a missing binary, missing import, bad
 selector, or tool crash must yield ``status="unavailable"`` (or ``"blocked"`` /
 ``"error"``) with an empty finding list — it must NEVER raise out of the sweep.
+A tool that overruns its own timeout is ``"timeout"``, the same word the sweep
+uses for a job that overruns the runner's budget (roadmap O32).
 
 Shared plumbing lives here:
   * :func:`validate_selector` — rejects shell metacharacters (A-2).

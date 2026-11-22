@@ -129,7 +129,7 @@ def run(selector: str, timeout: int = HARVEST_TIMEOUT, sources=None, **opts) -> 
         try:
             proc = run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return AdapterResult(status="unavailable", tool=TOOL,
+            return AdapterResult(status="timeout", tool=TOOL,
                                  reason="theHarvester timed out")
         except (FileNotFoundError, OSError):
             return AdapterResult(status="unavailable", tool=TOOL,

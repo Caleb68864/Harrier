@@ -111,3 +111,38 @@ def test_empty_sites_means_default_set(monkeypatch, sites):
 
 def test_named_sites_restrict_the_sweep(monkeypatch):
     assert _sherlock_args(monkeypatch, sites=[" GitHub ", "Reddit"]) == ["GitHub", "Reddit"]
+
+
+# --- O32: a tool's own timeout says "timeout", like the sweep does ------------
+
+import subprocess  # noqa: E402
+
+from harrier.adapters import domain, phone  # noqa: E402
+
+
+def _timing_out(args, timeout=30):
+    raise subprocess.TimeoutExpired(args, timeout)
+
+
+@pytest.mark.parametrize("mod,call", [
+    (username, lambda: username.run("awademan")),
+    (username, lambda: username.run("awademan", engine="maigret")),
+    (domain, lambda: domain.run("example.com")),
+    (phone, lambda: phone.run("+14025551234")),
+])
+def test_tool_timeout_status_is_timeout(monkeypatch, mod, call):
+    monkeypatch.setattr(mod, "binary_available", lambda n: True)
+    monkeypatch.setattr(mod, "run_subprocess", _timing_out)
+    res = call()
+    assert res.status == "timeout"
+    assert "timed out" in res.reason
+
+
+def test_sweep_reports_an_adapter_timeout_as_timeout(monkeypatch):
+    import harrier.sweep as sweep
+
+    monkeypatch.setattr(phone, "binary_available", lambda n: True)
+    monkeypatch.setattr(phone, "run_subprocess", _timing_out)
+    res = sweep.person_sweep("Amanda Bennett", phone="+14025551234", permute=False)
+    by_tool = {s["tool"]: s for s in res["sources"]}
+    assert by_tool["phone"]["status"] == "timeout"
