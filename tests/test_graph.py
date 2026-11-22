@@ -88,3 +88,21 @@ def test_cypher_escapes_quotes():
         {"name": "O'Brien"})
     cy = to_cypher(g)
     assert "\\'" in cy  # apostrophes escaped, not raw
+
+
+def test_non_finite_distinctiveness_does_not_reach_the_exports():
+    # Caller-supplied findings can carry NaN/inf (pydantic accepts them). The
+    # Cypher export already neutralised it (C17); GraphML wrote "nan", which
+    # is not an xsd:double (Gephi/Java reject it), and the JSON graph carried
+    # NaN, which is not JSON.
+    import json
+    import math
+
+    for bad in (float("nan"), float("inf")):
+        f = Finding(selector="a", source_tool="maigret", url="https://x/a",
+                    value="https://x/a", confidence="medium", distinctiveness=bad)
+        g = build_graph([f], {"name": "Jane Doe"})
+        (edge,) = g["edges"]
+        assert math.isfinite(edge["weight"]) and edge["weight"] == 0.6
+        assert '<data key="e_weight">0.6</data>' in to_graphml(g)
+        json.dumps(g, allow_nan=False)

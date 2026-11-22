@@ -49,8 +49,24 @@ def register_all(app: FastMCP) -> None:
             register(app)
 
 
-def main() -> None:
-    """Entrypoint: run the Harrier MCP server over stdio."""
+def main(argv: list[str] | None = None) -> None:
+    """Entrypoint: run the Harrier MCP server over stdio.
+
+    Takes no options of its own; ``--help`` and ``--version`` answer and exit
+    instead of starting a server that waits on stdin, and anything else is
+    refused (exit 2) rather than silently ignored.
+    """
+    import argparse
+
+    from harrier import __version__
+
+    parser = argparse.ArgumentParser(
+        prog="harrier-mcp",
+        description="Harrier free-source OSINT MCP server. Speaks MCP over "
+                    "stdio; start it from an MCP client, not by hand.")
+    parser.add_argument("--version", action="version",
+                        version=f"harrier-mcp {__version__}")
+    parser.parse_args(argv)
     app = create_app()
     app.run()
 

@@ -172,6 +172,12 @@ def person_sweep(name: str, *args, **kwargs) -> dict:
     result whose ``error`` and ``sources[]`` say what failed, instead of
     crashing the MCP tool call.
     """
+    if not isinstance(name, str) or not name.strip():
+        # Nothing to search for: don't run jobs or build links for "".
+        return {"findings": [], "candidates": [], "suppressed": 0, "verify": None,
+                "manual_assist": [], "warnings": [], "error": "empty name",
+                "sources": [{"tool": "person_sweep", "status": "error",
+                             "count": 0, "reasons": ["empty name"]}]}
     try:
         return _person_sweep(name, *args, **kwargs)
     except Exception as exc:  # noqa: BLE001 — boundary guard

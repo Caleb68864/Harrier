@@ -76,6 +76,8 @@ def manual_assist_links(
     by yield for identifying a private individual.
     """
     name = (name or "").strip()
+    if not name:
+        return []  # a link that searches for "" helps no one
     parts = name.split()
     first = parts[0] if parts else ""
     last = parts[-1] if len(parts) > 1 else ""

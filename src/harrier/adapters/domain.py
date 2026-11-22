@@ -139,6 +139,12 @@ def run(selector: str, timeout: int = HARVEST_TIMEOUT, sources=None, **opts) -> 
     return AdapterResult(findings, status="ok", tool=TOOL, reason=failure)
 
 
+def _finding(domain: str, kind: str, value: str) -> Finding:
+    return Finding(selector=domain, source_tool="theHarvester", value=value,
+                   exists=True, confidence="low", tier="free",
+                   raw={"type": kind, "value": value})
+
+
 def _parse_report(folder: str, domain: str) -> list[Finding]:
     """Parse theHarvester's JSON report from `folder`."""
     findings: list[Finding] = []
@@ -158,20 +164,33 @@ def _parse_report(folder: str, domain: str) -> list[Finding]:
     if not isinstance(data, dict):  # drifted/malformed report shape
         return findings
 
-    for kind, key in (("email", "emails"), ("host", "hosts")):
-        items = data.get(key)
-        if not isinstance(items, list):
+    emails = data.get("emails")
+    for item in emails if isinstance(emails, list) else []:
+        # Emails/hosts are strings by definition; a number/dict is junk.
+        value = item.strip() if isinstance(item, str) else ""
+        if value:
+            findings.append(_finding(domain, "email", value))
+
+    # Without -r, 4.11.1's "hosts" mixes bare hostnames with "host:address"
+    # pairs a source reported (address = IPv4, IPv6 or a CNAME). A hostname
+    # has no colon, so split on the first one: one finding per host, with the
+    # reported addresses kept in raw["addresses"].
+    addresses: dict[str, list[str]] = {}
+    hosts = data.get("hosts")
+    for item in hosts if isinstance(hosts, list) else []:
+        text = item.strip() if isinstance(item, str) else ""
+        host, _, addr = text.partition(":")
+        host, addr = host.strip(), addr.strip()
+        if not host:
             continue
-        for item in items:
-            # Emails/hosts are strings by definition; a number/dict is junk.
-            value = item.strip() if isinstance(item, str) else ""
-            if not value:
-                continue
-            findings.append(
-                Finding(selector=domain, source_tool="theHarvester", value=value,
-                        exists=True, confidence="low", tier="free",
-                        raw={"type": kind, "value": value})
-            )
+        seen = addresses.setdefault(host, [])
+        if addr and addr not in seen:
+            seen.append(addr)
+    for host, addrs in addresses.items():
+        f = _finding(domain, "host", host)
+        if addrs:
+            f.raw["addresses"] = addrs
+        findings.append(f)
     return findings
 
 
