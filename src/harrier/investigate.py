@@ -126,6 +126,7 @@ def _investigate(
     rounds_run = 0
     max_rounds = min(max(1, int(max_rounds or 1)), MAX_ROUNDS)
     sources: list[dict] = []
+    tool_steps: list[str] = []
 
     for _ in range(max_rounds):
         rounds_run += 1
@@ -139,6 +140,9 @@ def _investigate(
         all_findings.extend(sweep["findings"])
         # The latest round's per-source status is the one that stands.
         sources = list(sweep.get("sources") or [])
+        for step in sweep.get("next_steps") or []:
+            if step not in tool_steps:
+                tool_steps.append(step)
 
         if rounds_run == 1:  # same name every round, so one query is enough
             court = court_mod.run(name)
@@ -179,7 +183,9 @@ def _investigate(
         "discovered": discovered,
         "findings": findings,
         "corroborated": corroborated,
-        "next_steps": next_steps[:20],
+        # Manual/verify steps first (capped at 20), then the adapters' own
+        # suggested searches (O22), which can run to ~45 for one phone.
+        "next_steps": next_steps[:20] + tool_steps,
         "sources": sources + [court_source],
         "manual_assist": assist.manual_assist_links(
             name, city=city, state=state, maiden=maiden, married=married),

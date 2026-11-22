@@ -89,11 +89,15 @@ class AdapterResult(list):
     """
 
     def __init__(self, findings: Iterable[Finding] | None = None, *, status: str,
-                 tool: str, reason: str | None = None):
+                 tool: str, reason: str | None = None,
+                 next_steps: Iterable[str] | None = None):
         super().__init__(findings or [])
         self.status = status
         self.tool = tool
         self.reason = reason
+        # Things for the analyst to do by hand (e.g. searches to run); not
+        # findings, because nothing was observed.
+        self.next_steps = list(next_steps or [])
 
     @property
     def findings(self) -> list[Finding]:

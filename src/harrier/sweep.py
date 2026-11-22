@@ -175,7 +175,8 @@ def person_sweep(name: str, *args, **kwargs) -> dict:
     if not isinstance(name, str) or not name.strip():
         # Nothing to search for: don't run jobs or build links for "".
         return {"findings": [], "candidates": [], "suppressed": 0, "verify": None,
-                "manual_assist": [], "warnings": [], "error": "empty name",
+                "manual_assist": [], "warnings": [], "next_steps": [],
+                "error": "empty name",
                 "sources": [{"tool": "person_sweep", "status": "error",
                              "count": 0, "reasons": ["empty name"]}]}
     try:
@@ -197,6 +198,7 @@ def person_sweep(name: str, *args, **kwargs) -> dict:
             "suppressed": 0,
             "verify": None,
             "manual_assist": links,
+            "next_steps": [],
             "error": f"person_sweep internal error: {why}",
         }
 
@@ -296,6 +298,12 @@ def _person_sweep(
     tradecraft.stamp_all(surfaced)
 
     sources = _merge_sources(rows, reasons)
+    # Hand-work the adapters suggested (e.g. PhoneInfoga's Google searches).
+    next_steps: list[str] = []
+    for _, result in raw:
+        for step in getattr(result, "next_steps", None) or []:
+            if step not in next_steps:
+                next_steps.append(step)
 
     return {
         "findings": surfaced,
@@ -304,6 +312,7 @@ def _person_sweep(
         "suppressed": suppressed,
         "verify": verify_stats,
         "warnings": warnings,
+        "next_steps": next_steps,
         # Always hand back pre-filled links to the walled/gated free sources — the
         # honest replacement for the blocked people-search (Phase 4).
         "manual_assist": assist.manual_assist_links(
@@ -345,4 +354,5 @@ def register(app) -> None:
             "manual_assist": res["manual_assist"],
             "error": res.get("error"),
             "warnings": res.get("warnings", []),
+            "next_steps": res.get("next_steps", []),
         }

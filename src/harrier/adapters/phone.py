@@ -25,6 +25,7 @@ we parse the console format::
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 
@@ -88,8 +89,15 @@ def run(selector: str, timeout: int = 30, **opts) -> AdapterResult:
     if failure:  # stdout of a failed scan is an error message, not a result
         return AdapterResult(status="error", tool=TOOL, reason=failure)
 
-    findings = _parse(proc.stdout, number)
     results, scan_errors = _parse_console(proc.stdout)
+    next_steps: list[str] = []
+    if os.environ.get("HARRIER_PHONE_DORKS_AS_FINDINGS") != "1":
+        # Decided by agent 2026-11-21 (roadmap O22): googlesearch makes no
+        # request; it prints Google searches to try. Those are steps for the
+        # analyst, not observations. HARRIER_PHONE_DORKS_AS_FINDINGS=1 keeps
+        # them as a finding, as before.
+        next_steps = _dork_steps(results.pop(_DORK_SCANNER, None))
+    findings = _findings(results, number)
     notes = []
     if scan_errors:
         notes.append("phoneinfoga scanner errors: " + "; ".join(
@@ -106,10 +114,27 @@ def run(selector: str, timeout: int = 30, **opts) -> AdapterResult:
         if scan_errors:
             return AdapterResult(status="error", tool=TOOL, reason=reason)
         if results:  # every scanner that ran returned a negative
-            return AdapterResult(status="empty", tool=TOOL, reason=reason)
-        return AdapterResult(status="empty", tool=TOOL,
+            return AdapterResult(status="empty", tool=TOOL, reason=reason,
+                                 next_steps=next_steps)
+        return AdapterResult(status="empty", tool=TOOL, next_steps=next_steps,
                              reason=reason or "phoneinfoga returned no scanner results")
-    return AdapterResult(findings, status="ok", tool=TOOL, reason=reason)
+    return AdapterResult(findings, status="ok", tool=TOOL, reason=reason,
+                         next_steps=next_steps)
+
+
+_DORK_SCANNER = "googlesearch"
+
+
+def _dork_steps(fields) -> list[str]:
+    """googlesearch's ``{category: {"URL": [...]}}`` as next-step lines."""
+    steps: list[str] = []
+    for category, block in (fields or {}).items():
+        urls = block.get("URL") if isinstance(block, dict) else None
+        for url in urls if isinstance(urls, list) else []:
+            if isinstance(url, str) and url.startswith("https://"):
+                steps.append(f"Search by hand (PhoneInfoga {_DORK_SCANNER}, "
+                             f"{category}): {url}")
+    return steps
 
 
 # Scanners PhoneInfoga v2.11.0 runs only with a key (``DryRun`` in
@@ -195,7 +220,10 @@ def _is_negative(fields: dict) -> bool:
 
 def _parse(stdout: str, number: str) -> list[Finding]:
     """One Finding per PhoneInfoga scanner that returned a result."""
-    results, _ = _parse_console(stdout)
+    return _findings(_parse_console(stdout)[0], number)
+
+
+def _findings(results: dict, number: str) -> list[Finding]:
     findings: list[Finding] = []
     for scanner, fields in results.items():
         if _is_negative(fields):
@@ -229,4 +257,5 @@ def register(app) -> None:
             "count": len(res),
             "findings": [f.model_dump() for f in res],
             "reason": res.reason,
+            "next_steps": res.next_steps,
         }
