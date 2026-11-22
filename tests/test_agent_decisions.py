@@ -82,3 +82,32 @@ def test_block_detection_uses_challenge_markers(html, blocked):
 
 def test_403_is_still_blocked():
     assert people_search._looks_blocked(403, _CF_SERVED_RESULTS) is True
+
+
+# --- O25: sites=[] means the default set, not Sherlock's ~400 sites -----------
+
+from harrier.adapters import username  # noqa: E402
+
+
+def _sherlock_args(monkeypatch, **kw):
+    seen = {}
+    monkeypatch.setattr(username, "binary_available", lambda n: n == "sherlock")
+
+    def fake(args, timeout=30):
+        seen["args"] = args
+        import subprocess
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(username, "run_subprocess", fake)
+    username.run("awademan", **kw)
+    a = seen["args"]
+    return [a[i + 1] for i, x in enumerate(a) if x == "--site"]
+
+
+@pytest.mark.parametrize("sites", [[], ["", "  "], None])
+def test_empty_sites_means_default_set(monkeypatch, sites):
+    assert _sherlock_args(monkeypatch, sites=sites) == username.DEFAULT_SITES
+
+
+def test_named_sites_restrict_the_sweep(monkeypatch):
+    assert _sherlock_args(monkeypatch, sites=[" GitHub ", "Reddit"]) == ["GitHub", "Reddit"]
