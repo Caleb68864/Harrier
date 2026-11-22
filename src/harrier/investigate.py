@@ -68,7 +68,9 @@ def _dedup(findings: list[Finding]) -> list[Finding]:
     # corroborated first, then by confidence, so the representative kept is best
     rank = {"high": 0, "medium": 1, "low": 2}
     for f in sorted(findings, key=lambda x: rank.get(x.confidence, 3)):
-        key = (f.source_tool, (f.url or f.value or "").lower())
+        # Same tool, same selector, same entity (O26: not tool + entity only).
+        key = (f.source_tool, (f.selector or "").strip().lower(),
+               (f.url or f.value or "").lower())
         if key in seen:
             continue
         seen.add(key)
