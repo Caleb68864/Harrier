@@ -34,3 +34,54 @@ def test_investigate_dedup_keys_on_selector():
     out = inv._dedup([_holehe("a@example.com"), _holehe("b@example.com"),
                       _holehe("b@example.com")])
     assert sorted(f.selector for f in out) == ["a@example.com", "b@example.com"]
+
+
+# --- O30: theHarvester gets a HOME Harrier owns --------------------------------
+# 4.11.1 has no config-dir option: it writes ~/.theHarvester/{api-keys,proxies}.yaml
+# (lib/core.py CONFIG_DIRS[0]) and a scan history of every domain searched to
+# ~/.local/share/theHarvester/stash.sqlite (lib/stash.py), both via expanduser,
+# i.e. $HOME.
+
+import os  # noqa: E402
+import subprocess  # noqa: E402
+
+from harrier.adapters import domain, run_subprocess  # noqa: E402
+
+
+def _harvest_env(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake(args, timeout=30, env=None):
+        seen["env"] = env
+        seen["home_existed"] = env is not None and os.path.isdir(env.get("HOME", ""))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(domain, "binary_available", lambda n: True)
+    monkeypatch.setattr(domain, "run_subprocess", fake)
+    domain.run("example.com")
+    return seen
+
+
+def test_harvester_runs_with_a_throwaway_home(monkeypatch, tmp_path):
+    monkeypatch.delenv("HARRIER_HARVESTER_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "realhome"))
+    seen = _harvest_env(monkeypatch, tmp_path)
+    home = seen["env"]["HOME"]
+    assert home != str(tmp_path / "realhome")
+    assert seen["home_existed"]
+    assert not os.path.exists(home)  # removed after the run, with the report
+    assert seen["env"]["PATH"] == os.environ["PATH"]  # rest of env inherited
+
+
+def test_harvester_home_setting_uses_that_dir(monkeypatch, tmp_path):
+    keep = tmp_path / "harvester-home"
+    monkeypatch.setenv("HARRIER_HARVESTER_HOME", str(keep))
+    seen = _harvest_env(monkeypatch, tmp_path)
+    assert seen["env"]["HOME"] == str(keep)
+    assert keep.is_dir()  # created if missing, and kept
+
+
+def test_run_subprocess_passes_env():
+    out = run_subprocess(["sh", "-c", "printf %s \"$HOME\""], timeout=5,
+                         env={**os.environ, "HOME": "/nonexistent-harrier"})
+    assert out.stdout == "/nonexistent-harrier"

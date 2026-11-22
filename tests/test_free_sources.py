@@ -9,7 +9,7 @@ from harrier.adapters import domain
 def test_domain_uses_free_source_allowlist_not_all(monkeypatch):
     seen = {}
 
-    def fake(args, timeout=30):
+    def fake(args, timeout=30, **kw):
         seen["b"] = args[args.index("-b") + 1]
         return subprocess.CompletedProcess(args, 0, "", "")
 

@@ -79,6 +79,23 @@ FREE_SOURCES = (
 )
 
 
+def _harvester_env(tmp: str) -> dict[str, str]:
+    """The environment theHarvester runs in: ours, with a HOME Harrier owns.
+
+    Decided by agent 2026-11-21 (roadmap O30). 4.11.1 has no config-dir
+    option; through ``expanduser`` it writes ``~/.theHarvester/`` (default
+    ``api-keys.yaml``/``proxies.yaml``) and keeps a history of every domain
+    searched in ``~/.local/share/theHarvester/stash.sqlite``. By default HOME
+    is a directory inside the run's temp dir, so nothing is left behind (the
+    keyless sources need no keys file). ``HARRIER_HARVESTER_HOME=<dir>`` uses
+    that directory instead (created if missing, kept); set it to your real
+    home to get the old behaviour.
+    """
+    home = os.environ.get("HARRIER_HARVESTER_HOME") or os.path.join(tmp, "home")
+    os.makedirs(home, exist_ok=True)
+    return {**os.environ, "HOME": home}
+
+
 def _validate_sources(sources) -> str:
     """Return a comma-joined subset of FREE_SOURCES, or raise SelectorError.
 
@@ -127,7 +144,7 @@ def run(selector: str, timeout: int = HARVEST_TIMEOUT, sources=None, **opts) -> 
         out_base = os.path.join(tmp, "report")
         args = [HARVESTER_BIN, "-d", domain, "-b", source_arg, "-f", out_base]
         try:
-            proc = run_subprocess(args, timeout=timeout)
+            proc = run_subprocess(args, timeout=timeout, env=_harvester_env(tmp))
         except subprocess.TimeoutExpired:
             return AdapterResult(status="timeout", tool=TOOL,
                                  reason="theHarvester timed out")

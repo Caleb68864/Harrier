@@ -158,10 +158,12 @@ def binary_available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def run_subprocess(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> subprocess.CompletedProcess:
+def run_subprocess(args: list[str], timeout: int = DEFAULT_TIMEOUT,
+                   env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     """Run a subprocess safely: list args, no shell, bounded timeout.
 
-    Runs with ``shell=False`` always. Raises the usual subprocess exceptions
+    Runs with ``shell=False`` always; ``env`` replaces the environment
+    (``None`` inherits it). Raises the usual subprocess exceptions
     (``FileNotFoundError``, ``TimeoutExpired``); adapters catch these and
     degrade. ``args`` MUST be a list.
 
@@ -173,7 +175,7 @@ def run_subprocess(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> subproces
         raise SelectorError("subprocess args must be a list, never a shell string")
     from harrier.runner import job_remaining
 
-    return _run_killable(args, job_remaining(clamp_timeout(timeout)))
+    return _run_killable(args, job_remaining(clamp_timeout(timeout)), env)
 
 
 _POLL = 0.1  # seconds between cancel checks
@@ -190,7 +192,8 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         pass
 
 
-def _run_killable(args: list[str], limit: float) -> subprocess.CompletedProcess:
+def _run_killable(args: list[str], limit: float,
+                  env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     """``subprocess.run`` that also stops when the current runner job is
     cancelled, and kills the whole process group (not just the child)."""
     from harrier.runner import job_cancelled
@@ -203,6 +206,7 @@ def _run_killable(args: list[str], limit: float) -> subprocess.CompletedProcess:
         stderr=subprocess.PIPE,
         text=True,
         shell=False,
+        env=env,  # None: inherit
         start_new_session=(os.name == "posix"),
     )
     deadline = time.monotonic() + limit

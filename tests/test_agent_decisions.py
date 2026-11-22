@@ -120,7 +120,7 @@ import subprocess  # noqa: E402
 from harrier.adapters import domain, phone  # noqa: E402
 
 
-def _timing_out(args, timeout=30):
+def _timing_out(args, timeout=30, **kw):
     raise subprocess.TimeoutExpired(args, timeout)
 
 
