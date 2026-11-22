@@ -533,7 +533,10 @@ def test_healthy_adapter_call_logs_nothing(monkeypatch, caplog):
     monkeypatch.setattr(phone, "binary_available", lambda n: True)
     monkeypatch.setattr(phone, "run_subprocess", lambda args, timeout=30:
                         subprocess.CompletedProcess(args, 0,
-                                                    "Results for local\nCountry: US\n", ""))
+                                                    "Results for local\nCountry: US\n"
+                                                    "Results for numverify\nValid: true\n"
+                                                    "Results for googlecse\n", ""))
     with caplog.at_level(logging.INFO, logger="harrier.adapters"):
+        # Every scanner ran (a keyless run carries a reason, logged at INFO).
         assert phone.run("+15555550100").status == "ok"
     assert [r for r in caplog.records if r.name.startswith("harrier.adapters")] == []

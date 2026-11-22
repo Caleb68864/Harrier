@@ -79,7 +79,7 @@ def test_version_checked_is_pinned():
 
 def test_real_scan_keeps_googlesearch_categories(monkeypatch):
     res = _run(monkeypatch, _REAL_SCAN)
-    assert res.status == "ok" and res.reason is None
+    assert res.status == "ok"
     by_scanner = {f.raw["scanner"]: f for f in res}
     assert set(by_scanner) == {"googlesearch", "local"}
     assert by_scanner["local"].value == "US"
@@ -101,5 +101,61 @@ def test_real_scan_scanner_error_is_reported(monkeypatch):
     res = _run(monkeypatch, _REAL_SCAN_WITH_ERROR)
     assert res.status == "ok"
     assert [f.raw["scanner"] for f in res] == ["local"]
-    assert res.reason == ("phoneinfoga scanner errors: "
-                          "numverify: Invalid authentication credentials")
+    assert res.reason.startswith("phoneinfoga scanner errors: "
+                                 "numverify: Invalid authentication credentials")
+
+
+# `phoneinfoga scan -n +33142685300` (googlesearch block left out): ovh runs
+# for French numbers and printed a negative.
+_REAL_SCAN_OVH_NOT_FOUND = (
+    "Running scan for phone number +33142685300...\n"
+    "\n"
+    "Results for local\n"
+    "Raw local: 0142685300\n"
+    "Local: 01 42 68 53 00\n"
+    "E164: +33142685300\n"
+    "International: 33142685300\n"
+    "Country: FR\n"
+    "\n"
+    "Results for ovh\n"
+    "Found: false\n"
+    "\n"
+    "2 scanner(s) succeeded\n"
+)
+
+
+def test_ovh_not_found_is_not_a_finding(monkeypatch):
+    res = _run(monkeypatch, _REAL_SCAN_OVH_NOT_FOUND)
+    assert res.status == "ok"
+    assert [f.raw["scanner"] for f in res] == ["local"]
+
+
+def test_ovh_found_is_a_finding(monkeypatch):
+    out = _REAL_SCAN_OVH_NOT_FOUND.replace(
+        "Found: false\n", "Found: true\nNumber range: 0142685xxx\nCity: Paris\n")
+    res = _run(monkeypatch, out)
+    assert sorted(f.raw["scanner"] for f in res) == ["local", "ovh"]
+
+
+def test_only_a_negative_is_empty(monkeypatch):
+    out = ("Running scan for phone number +33142685300...\n\n"
+           "Results for ovh\nFound: false\n\n1 scanner(s) succeeded\n")
+    res = _run(monkeypatch, out)
+    assert res.status == "empty" and res == []
+
+
+def test_keyless_run_says_which_keyed_scanners_were_skipped(monkeypatch):
+    # PhoneInfoga skips numverify and googlecse without a key and prints
+    # nothing about it (DryRun fails; logged at debug only).
+    res = _run(monkeypatch, _REAL_SCAN)
+    assert res.status == "ok"
+    assert "numverify not run" in res.reason
+    assert "NUMVERIFY_API_KEY" in res.reason
+    assert "googlecse not run" in res.reason
+    assert "GOOGLECSE_CX" in res.reason and "GOOGLE_API_KEY" in res.reason
+
+
+def test_scanner_that_errored_is_not_called_skipped(monkeypatch):
+    res = _run(monkeypatch, _REAL_SCAN_WITH_ERROR)
+    assert "numverify not run" not in res.reason
+    assert "numverify: Invalid authentication credentials" in res.reason

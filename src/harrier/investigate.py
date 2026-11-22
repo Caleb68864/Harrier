@@ -95,7 +95,7 @@ def investigate(name: str, *args, **kwargs) -> dict:
         why = f"{type(exc).__name__}: {msg[:300]}" if msg else type(exc).__name__
         return {"target": name, "rounds_run": 0, "tool_calls": [], "discovered": [],
                 "findings": [], "corroborated": [], "next_steps": [],
-                "manual_assist": [], "error": f"investigate internal error: {why}"}
+                "sources": [], "manual_assist": [], "error": f"investigate internal error: {why}"}
 
 
 def _investigate(
@@ -121,6 +121,7 @@ def _investigate(
     discovered: list[str] = []
     rounds_run = 0
     max_rounds = min(max(1, int(max_rounds or 1)), MAX_ROUNDS)
+    sources: list[dict] = []
 
     for _ in range(max_rounds):
         rounds_run += 1
@@ -132,10 +133,18 @@ def _investigate(
         )
         tool_calls.append(f"person_sweep(engine={engine},verify={verify})")
         all_findings.extend(sweep["findings"])
+        # The latest round's per-source status is the one that stands.
+        sources = list(sweep.get("sources") or [])
 
-        court = court_mod.run(name)
-        tool_calls.append("court_search")
-        all_findings.extend(list(court))
+        if rounds_run == 1:  # same name every round, so one query is enough
+            court = court_mod.run(name)
+            tool_calls.append("court_search")
+            all_findings.extend(list(court))
+            court_source = {"tool": "courtlistener",
+                            "status": getattr(court, "status", "unknown"),
+                            "count": len(court)}
+            if getattr(court, "reason", None):
+                court_source["reasons"] = [court.reason]
 
         # 3) REFINE — new distinctive surname in corroborated metadata?
         corroborated = [f for f in sweep["findings"] if _is_corroborated(f)]
@@ -167,6 +176,7 @@ def _investigate(
         "findings": findings,
         "corroborated": corroborated,
         "next_steps": next_steps[:20],
+        "sources": sources + [court_source],
         "manual_assist": assist.manual_assist_links(
             name, city=city, state=state, maiden=maiden, married=married),
     }
@@ -205,6 +215,7 @@ def register(app) -> None:
             "findings": [f.model_dump() for f in res["findings"]],
             "corroborated": [f.model_dump() for f in res["corroborated"]],
             "next_steps": res["next_steps"],
+            "sources": res.get("sources", []),
             "manual_assist": res["manual_assist"],
             "error": res.get("error"),
         }

@@ -1,8 +1,9 @@
 """Court-records adapter — CourtListener / RECAP (roadmap Phase 4b).
 
 CourtListener exposes a free REST search API over millions of federal dockets
-and opinions. Anonymous access works (rate-limited); an optional token in
-``COURTLISTENER_TOKEN`` raises the limit. Divorce / name-change dockets are a
+and opinions. It needs a free account's API token in ``COURTLISTENER_TOKEN``:
+checked 2026-11-21, an anonymous v4 search answers 401 ("Authentication
+credentials were not provided.") and v3 answers 403. Divorce / name-change dockets are a
 maiden-name lead. Structured and un-walled — no anti-bot fight.
 
 Degrades honestly: any network/parse failure → ``status="unavailable"`` with a
@@ -60,6 +61,9 @@ def run(name: str, timeout: int = 15) -> AdapterResult:
     if data is None:
         if status == 429:
             cause = "rate-limited (HTTP 429); retry later or set COURTLISTENER_TOKEN"
+        elif status in (401, 403) and not os.environ.get("COURTLISTENER_TOKEN"):
+            cause = (f"HTTP {status}; the API requires an API token: set "
+                     "COURTLISTENER_TOKEN (free CourtListener account)")
         elif status in (401, 403):
             cause = f"HTTP {status}; check COURTLISTENER_TOKEN"
         elif status:

@@ -89,14 +89,36 @@ def run(selector: str, timeout: int = 30, **opts) -> AdapterResult:
         return AdapterResult(status="error", tool=TOOL, reason=failure)
 
     findings = _parse(proc.stdout, number)
-    _, scan_errors = _parse_console(proc.stdout)
-    reason = "; ".join(f"{k}: {v}" for k, v in sorted(scan_errors.items())) or None
-    if reason:
-        reason = f"phoneinfoga scanner errors: {reason}"
+    results, scan_errors = _parse_console(proc.stdout)
+    notes = []
+    if scan_errors:
+        notes.append("phoneinfoga scanner errors: " + "; ".join(
+            f"{k}: {v}" for k, v in sorted(scan_errors.items())))
+    # A keyed scanner that has no key fails its DryRun and is left out of the
+    # output without a word (logged at debug level only). Absent from both
+    # the results and the errors means it was skipped.
+    for scanner, env in _KEYED_SCANNERS.items():
+        if scanner not in results and scanner not in scan_errors:
+            notes.append(f"{scanner} not run: {env} not set "
+                         "(PhoneInfoga skips it silently)")
+    reason = "; ".join(notes) or None
     if not findings:
-        return AdapterResult(status="error" if scan_errors else "empty", tool=TOOL,
+        if scan_errors:
+            return AdapterResult(status="error", tool=TOOL, reason=reason)
+        if results:  # every scanner that ran returned a negative
+            return AdapterResult(status="empty", tool=TOOL, reason=reason)
+        return AdapterResult(status="empty", tool=TOOL,
                              reason=reason or "phoneinfoga returned no scanner results")
     return AdapterResult(findings, status="ok", tool=TOOL, reason=reason)
+
+
+# Scanners PhoneInfoga v2.11.0 runs only with a key (``DryRun`` in
+# ``lib/remote/numverify_scanner.go`` and ``googlecse_scanner.go``). It reads
+# the key from its environment or a ``.env`` file in its working directory.
+_KEYED_SCANNERS = {
+    "numverify": "NUMVERIFY_API_KEY",
+    "googlecse": "GOOGLECSE_CX and GOOGLE_API_KEY",
+}
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -165,11 +187,19 @@ def _parse_console(stdout: str) -> tuple[dict[str, dict], dict[str, str]]:
     return results, errors
 
 
+def _is_negative(fields: dict) -> bool:
+    """True for a scanner result that says it found nothing (ovh prints
+    ``Found: false``). That is a negative, not a finding."""
+    return fields.get("Found") == "false"
+
+
 def _parse(stdout: str, number: str) -> list[Finding]:
     """One Finding per PhoneInfoga scanner that returned a result."""
     results, _ = _parse_console(stdout)
     findings: list[Finding] = []
     for scanner, fields in results.items():
+        if _is_negative(fields):
+            continue
         value = next((as_text(fields[k]) for k in _VALUE_FIELDS
                       if isinstance(fields.get(k), str) and fields[k]), None)
         findings.append(

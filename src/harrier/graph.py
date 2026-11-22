@@ -46,9 +46,23 @@ def _classify(f: Finding) -> tuple[str, str]:
     return _ENTITY_MAP.get(f.source_tool, ("entity", "related_to"))
 
 
+# Tools whose selector IS the entity: PhoneInfoga is asked about a number and
+# every scanner result (country, carrier, search links) describes that number.
+_SELECTOR_IS_ENTITY = {"phoneinfoga"}
+
+
 def _entity_value(f: Finding) -> str | None:
-    # NOT selector — that's the query (often the person's own name), not a
-    # discovered entity. A keyless/blocked finding has no entity to place.
+    """The discovered entity a finding places in the graph, or None.
+
+    Usually NOT the selector: that's the query (often the person's own name),
+    not a discovered entity. A blocked finding is a manual step (its URL is
+    the site's home page), and ``exists=False`` is a claim the verify stage
+    disproved (a dead profile): neither is a link to draw.
+    """
+    if f.tier == "blocked" or f.exists is False:
+        return None
+    if f.source_tool in _SELECTOR_IS_ENTITY:
+        return (f.selector or "").strip() or None
     return f.value or f.url or None
 
 
@@ -82,7 +96,7 @@ def build_graph(findings: list[Finding], anchor: dict | None = None) -> dict:
     for f in findings or []:
         val = _entity_value(f)
         if not val:
-            continue  # blocked/keyless finding — no confirmed entity to place
+            continue  # blocked, disproved, or keyless — no entity to place
         ntype, relation = _classify(f)
         nid = f"{ntype}:{_norm(val)}"
         weight = _edge_weight(f)
