@@ -48,8 +48,11 @@ HARVESTER_BIN = "theHarvester"
 # dispatch in ``__main__.py``). Each module below reads no key (none appears
 # in ``api-keys.yaml`` or calls ``Core.*_key()``) and only queries a
 # third-party dataset; nothing is sent to the target's own hosts:
-#   commoncrawl      added: index.commoncrawl.org CDX (3 fixed 2023-24
-#                    indexes) -> hostnames seen in crawled URLs
+#   commoncrawl      DROPPED (owner, 2026-11-21): index.commoncrawl.org CDX
+#                    (3 fixed 2023-24 indexes). Real run on kernel.org: 109 s
+#                    alone for 0 hosts (the index answered 504 Gateway
+#                    Time-out), and it pushed whole runs to 100-139 s, past
+#                    the budget (a timeout returns nothing).
 #   robtex           added: freeapi.robtex.com passive DNS forward/reverse
 #                    -> hostnames (rrname, CNAME targets) and A-record IPs
 #   subdomaincenter  added: api.subdomain.center -> list of subdomains
@@ -71,9 +74,8 @@ HARVESTER_VERSION_CHECKED = "4.11.1"
 # at all, so the budget must cover the slowest (thc can wait 60 s and retry).
 HARVEST_TIMEOUT = 120
 FREE_SOURCES = (
-    "certspotter", "commoncrawl", "crtsh", "hackertarget", "otx",
-    "rapiddns", "robtex", "subdomaincenter", "thc", "urlscan",
-    "waybackarchive",
+    "certspotter", "crtsh", "hackertarget", "otx", "rapiddns", "robtex",
+    "subdomaincenter", "thc", "urlscan", "waybackarchive",
 )
 
 
@@ -164,12 +166,18 @@ def _parse_report(folder: str, domain: str) -> list[Finding]:
     if not isinstance(data, dict):  # drifted/malformed report shape
         return findings
 
-    emails = data.get("emails")
-    for item in emails if isinstance(emails, list) else []:
-        # Emails/hosts are strings by definition; a number/dict is junk.
-        value = item.strip() if isinstance(item, str) else ""
-        if value:
-            findings.append(_finding(domain, "email", value))
+    def _strings(key: str) -> list[str]:
+        # Entries are strings by definition; a number/dict is junk.
+        items = data.get(key)
+        out: list[str] = []
+        for item in items if isinstance(items, list) else []:
+            value = item.strip() if isinstance(item, str) else ""
+            if value and value not in out:
+                out.append(value)
+        return out
+
+    for value in _strings("emails"):
+        findings.append(_finding(domain, "email", value))
 
     # Without -r, 4.11.1's "hosts" mixes bare hostnames with "host:address"
     # pairs a source reported (address = IPv4, IPv6 or a CNAME). A hostname
@@ -191,6 +199,13 @@ def _parse_report(folder: str, domain: str) -> list[Finding]:
         if addrs:
             f.raw["addresses"] = addrs
         findings.append(f)
+
+    # IPs, ASNs and "interesting" URLs the sources reported (O29). The URL
+    # goes in ``value`` only, not ``Finding.url``: verify fetches finding
+    # URLs, and these are the target's own pages.
+    for kind, key in (("ip", "ips"), ("asn", "asns"), ("url", "interesting_urls")):
+        for value in _strings(key):
+            findings.append(_finding(domain, kind, value))
     return findings
 
 

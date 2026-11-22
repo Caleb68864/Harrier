@@ -38,11 +38,22 @@ def _norm(s: str | None) -> str:
     return re.sub(r"\s+", " ", (s or "").strip()).lower()
 
 
+# theHarvester raw["type"] -> (node_type, relation).
+_HARVESTER_MAP: dict[str, tuple[str, str]] = {
+    "email": ("email", "has_email"),
+    "host": ("host", "resolves_host"),
+    "ip": ("ip", "uses_ip"),
+    "asn": ("asn", "in_asn"),
+    "url": ("url", "has_url"),
+}
+
+# Cypher labels that the generic CamelCase rule would mangle ("Ip", "Asn").
+_CYPHER_LABELS = {"ip": "IPAddress", "asn": "ASN", "url": "URL"}
+
+
 def _classify(f: Finding) -> tuple[str, str]:
     if f.source_tool == "theHarvester":
-        if (f.raw or {}).get("type") == "host":
-            return ("host", "resolves_host")
-        return ("email", "has_email")
+        return _HARVESTER_MAP.get((f.raw or {}).get("type"), ("email", "has_email"))
     return _ENTITY_MAP.get(f.source_tool, ("entity", "related_to"))
 
 
@@ -225,7 +236,8 @@ def to_cypher(graph: dict) -> str:
     for i, n in enumerate(graph.get("nodes", [])):
         var = f"n{i}"
         idx[n["id"]] = var
-        label = "".join(w.capitalize() for w in re.split(r"[^a-z0-9]+", n["type"]) if w) or "Entity"
+        label = _CYPHER_LABELS.get(n["type"]) or "".join(
+            w.capitalize() for w in re.split(r"[^a-z0-9]+", n["type"]) if w) or "Entity"
         lines.append(
             f"MERGE ({var}:{label} {{id:'{_cy(n['id'])}'}}) "
             f"SET {var}.label='{_cy(n['label'])}';")
