@@ -85,3 +85,52 @@ def test_run_subprocess_passes_env():
     out = run_subprocess(["sh", "-c", "printf %s \"$HOME\""], timeout=5,
                          env={**os.environ, "HOME": "/nonexistent-harrier"})
     assert out.stdout == "/nonexistent-harrier"
+
+
+# --- O31: generate_candidates says why it returned nothing --------------------
+
+import asyncio  # noqa: E402
+import json  # noqa: E402
+
+from harrier.server import create_app  # noqa: E402
+
+
+def _call(args):
+    async def go():
+        return await create_app().call_tool("generate_candidates", args)
+
+    res = asyncio.run(go())
+    content = res[0] if isinstance(res, tuple) else res
+    return content
+
+
+def _texts(content):
+    return [c.text for c in content]
+
+
+def test_candidates_plain_call_is_unchanged():
+    # Backward compatible: a valid call still returns the bare list.
+    content = _call({"first": "Amanda", "last": "Wademan", "max": 3})
+    texts = _texts(content)
+    assert len(texts) == 3 and all(not t.startswith("{") for t in texts)
+
+
+def test_candidates_bad_input_is_a_tool_error_with_a_reason():
+    from mcp.server.fastmcp.exceptions import ToolError
+    import pytest
+
+    for args, why in (({"first": "", "last": " "}, "first or last name"),
+                      ({"first": "Amanda", "last": "Wademan", "max": 0}, "max")):
+        with pytest.raises(ToolError, match=why):
+            _call(args)
+
+
+def test_candidates_detailed_shape():
+    (c,) = _call({"first": "Amanda", "last": "Wademan", "max": 2, "detailed": True})
+    out = json.loads(c.text)
+    assert out["status"] == "ok" and out["count"] == 2
+    assert len(out["candidates"]) == 2 and out["reason"] is None
+    (c,) = _call({"first": "", "last": "", "detailed": True})
+    out = json.loads(c.text)
+    assert out["status"] == "error" and out["candidates"] == []
+    assert "first or last name" in out["reason"]

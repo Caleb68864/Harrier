@@ -115,6 +115,14 @@ def generate_candidates(
     return out
 
 
+def _input_problem(first, last, max) -> str | None:
+    if not (first or "").strip() and not (last or "").strip():
+        return "need a first or last name"
+    if not isinstance(max, int) or max < 1:
+        return f"max must be a positive integer, got {max!r}"
+    return None
+
+
 def register(app: FastMCP) -> None:
     """Register `generate_candidates` as an MCP tool."""
 
@@ -126,9 +134,24 @@ def register(app: FastMCP) -> None:
         married: str | None = None,
         nicknames: list[str] | None = None,
         max: int = 25,
-    ) -> list[str]:
-        """Generate ranked handle/email candidates from a person's name parts."""
-        return generate_candidates(
+        detailed: bool = False,
+    ) -> list[str] | dict:
+        """Generate ranked handle/email candidates from a person's name parts.
+
+        Returns the list of candidates. With ``detailed=True`` returns
+        ``{status, count, candidates, reason}`` like the other tools. Bad input
+        (no name, ``max`` < 1) is an error with a reason, not an empty list.
+        """
+        # Decided by agent 2026-11-21 (roadmap O31): keep the bare list for
+        # existing callers; explain bad input instead of returning [] (which
+        # reached the agent as no content at all).
+        problem = _input_problem(first, last, max)
+        if problem:
+            if detailed:
+                return {"status": "error", "count": 0, "candidates": [],
+                        "reason": problem}
+            raise ValueError(problem)
+        out = generate_candidates(
             first,
             last,
             maiden=maiden,
@@ -136,3 +159,8 @@ def register(app: FastMCP) -> None:
             nicknames=nicknames or [],
             max=max,
         )
+        if detailed:
+            return {"status": "ok" if out else "empty", "count": len(out),
+                    "candidates": out,
+                    "reason": None if out else "no candidates from these name parts"}
+        return out
