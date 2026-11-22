@@ -3,6 +3,8 @@
 import io
 import json
 
+import pytest
+
 import harrier.adapters.court as court
 import harrier.adapters.genealogy as genealogy
 
@@ -77,3 +79,10 @@ def test_genealogy_parses_with_token(monkeypatch):
     assert res.status == "ok"
     assert res[0].value == "Amanda Wademan"
     assert res[0].source_tool == "familysearch"
+
+
+@pytest.fixture(autouse=True)
+def _court_token(monkeypatch):
+    # court.run skips the request without a token (O23); these tests fake
+    # the request itself.
+    monkeypatch.setenv("COURTLISTENER_TOKEN", "test-token")

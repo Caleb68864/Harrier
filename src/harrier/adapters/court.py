@@ -57,6 +57,17 @@ def run(name: str, timeout: int = 15) -> AdapterResult:
     # Name is URL-encoded into an API query (no subprocess/shell), so a plain
     # emptiness check is the right guard — apostrophes/hyphens in names are fine.
 
+    if not os.environ.get("COURTLISTENER_TOKEN") and \
+            os.environ.get("HARRIER_COURT_ANONYMOUS") != "1":
+        # Decided by agent 2026-11-21 (roadmap O23): the API refuses every
+        # anonymous call (401/403), so don't send one. HARRIER_COURT_ANONYMOUS=1
+        # tries anyway, in case anonymous access comes back.
+        return AdapterResult(
+            status="unavailable", tool=TOOL,
+            reason="CourtListener's API requires an API token; skipped (no "
+                   "request made). Set COURTLISTENER_TOKEN (free CourtListener "
+                   "account), or use the manual_assist CourtListener link.")
+
     status, data = _fetch(f'"{name}"', timeout)
     if data is None:
         if status == 429:
