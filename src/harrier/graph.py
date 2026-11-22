@@ -67,8 +67,12 @@ def _entity_value(f: Finding) -> str | None:
 
 
 def _edge_weight(f: Finding) -> float:
-    if f.distinctiveness is not None:
-        return round(float(f.distinctiveness), 2)
+    # A non-finite distinctiveness (NaN/inf from caller-supplied findings)
+    # would write "nan" into GraphML and NaN into the JSON graph: fall back
+    # to the confidence weight instead.
+    d = f.distinctiveness
+    if d is not None and math.isfinite(d):
+        return round(float(d), 2)
     return _CONF_WEIGHT.get(f.confidence, 0.3)
 
 
@@ -104,7 +108,9 @@ def build_graph(findings: list[Finding], anchor: dict | None = None) -> dict:
         node = nodes.get(nid)
         node_attrs = {
             "tier": f.tier, "confidence": f.confidence,
-            "likelihood": f.likelihood, "distinctiveness": f.distinctiveness,
+            "likelihood": f.likelihood,
+            "distinctiveness": f.distinctiveness if f.distinctiveness is None
+            or math.isfinite(f.distinctiveness) else None,
             "platform": (f.raw or {}).get("site"),
         }
         if node is None:
@@ -285,6 +291,8 @@ def register(app) -> None:
         anchor = {"name": name, "city": city, "state": state,
                   "maiden": maiden, "married": married}
         invalid: list[dict] = []
+        sources: list[dict] = []
+        error = None
         if findings is not None:
             fs, invalid = parse_findings(findings)
         else:
@@ -294,6 +302,7 @@ def register(app) -> None:
                 nicknames=nicknames, email=email, phone=phone, depth=depth,
                 verify=True, consent=consent)
             fs = res["findings"]
+            sources, error = res.get("sources", []), res.get("error")
         graph = build_graph(fs, anchor)
         return {
             "graph": graph,
@@ -301,4 +310,7 @@ def register(app) -> None:
             "cypher": to_cypher(graph),
             "stats": graph["stats"],
             "invalid_findings": invalid,
+            # From the person_sweep run (none when findings were given).
+            "sources": sources,
+            "error": error,
         }

@@ -86,6 +86,10 @@ def investigate(name: str, *args, **kwargs) -> dict:
     An unexpected exception returns a well-formed empty result with ``error``
     set, so the MCP call reports the failure instead of crashing.
     """
+    if not isinstance(name, str) or not name.strip():
+        return {"target": name, "rounds_run": 0, "tool_calls": [], "discovered": [],
+                "findings": [], "corroborated": [], "next_steps": [],
+                "sources": [], "manual_assist": [], "error": "empty name"}
     try:
         return _investigate(name, *args, **kwargs)
     except Exception as exc:  # noqa: BLE001 — boundary guard
