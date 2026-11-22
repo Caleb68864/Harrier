@@ -168,14 +168,16 @@ Harrier orchestrates these open-source reconnaissance tools and structured sourc
 | Phone | **PhoneInfoga** |
 | Structured, un-walled records | **CourtListener / RECAP**, **FamilySearch** |
 
-Two sources accept an optional token for higher limits or record access:
+Some sources need a free token or key:
 
 | Env var | Effect |
 |---------|--------|
-| `COURTLISTENER_TOKEN` | raises the CourtListener API rate limit |
+| `COURTLISTENER_TOKEN` | enables `court_search` (the CourtListener API refuses anonymous calls, checked 2026-11-21) |
 | `FAMILYSEARCH_ACCESS_TOKEN` | enables the FamilySearch record-search API |
+| `NUMVERIFY_API_KEY` | enables PhoneInfoga's numverify scanner (read by PhoneInfoga itself) |
+| `GOOGLECSE_CX`, `GOOGLE_API_KEY` | enable PhoneInfoga's googlecse scanner (read by PhoneInfoga itself) |
 
-Everything **degrades honestly** without them: no token means an `unavailable` status with a reason, not an error.
+Everything **degrades honestly** without them: no token means an `unavailable` status with a reason, not an error. A PhoneInfoga scanner skipped for lack of a key is named in `phone_lookup`'s `reason`.
 
 ---
 
