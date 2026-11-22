@@ -298,7 +298,7 @@ uv run pytest          # full suite
 uv run pytest -q       # quiet
 ```
 
-The suite uses fakes, fixtures and local loopback servers; it makes no lookups on the internet. One render test drives a real Chromium against those local servers when one is available (Playwright's, a system `chromium`, or the path in `HARRIER_TEST_CHROMIUM`) and is skipped otherwise. Run `uv run pytest -q` for the current count rather than trusting a number in this file.
+The suite uses fakes, fixtures and local loopback servers; it makes no lookups on the internet. One render test drives a real Chromium against those local servers, once per build available: a local Chromium (the path in `HARRIER_TEST_CHROMIUM`, a system `chromium`, or Playwright's full build) and Playwright's default headless shell, which is what production launches (`uv run playwright install chromium-headless-shell`). It is skipped when neither is present. Run `uv run pytest -q` for the current count rather than trusting a number in this file.
 
 ---
 

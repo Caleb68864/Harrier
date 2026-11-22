@@ -436,6 +436,7 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
             router.prefetched[final_url] = (status, headers, body)
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True, args=launch_args)
+                ctx = None
                 try:
                     ctx = browser.new_context(user_agent=_UA, service_workers="block")
                     # Context-wide, so popups and frames are covered too.
@@ -446,6 +447,12 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
                     page.wait_for_timeout(1500)  # let client-side JS populate
                     return page.content()
                 finally:
+                    if ctx is not None:
+                        # Drop the routes first: a request still in the router
+                        # would otherwise be cancelled by close() and asyncio
+                        # prints a CancelledError traceback to stderr.
+                        with contextlib.suppress(Exception):
+                            ctx.unroute_all(behavior="ignoreErrors")
                     browser.close()
         finally:
             dead.close()
