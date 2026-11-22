@@ -124,13 +124,16 @@ def _fake_playwright(monkeypatch, routes_to_play):
         def new_page(self):
             return Page()
 
+        def unroute_all(self, behavior=None):
+            seen.setdefault("events", []).append(("unroute_all", behavior))
+
     class Browser:
         def new_context(self, **k):
             seen["context"] = k
             return Ctx()
 
         def close(self):
-            pass
+            seen.setdefault("events", []).append(("close", None))
 
     class Chromium:
         def launch(self, **kw):
@@ -317,6 +320,30 @@ def _chromium_path():
         return None
 
 
+def _playwright_default_ok():
+    """True if Playwright's own default headless browser is installed: the one
+    production launches (``p.chromium.launch(headless=True)``, no path)."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            pw.chromium.launch(headless=True).close()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _browsers():
+    """Every build to test: a local Chromium (path) and, if installed,
+    Playwright's default headless browser (None = production's launch)."""
+    out = []
+    if _chromium_path() is not None:
+        out.append(pytest.param(_chromium_path(), id="local-chromium"))
+    if _playwright_ok() and _playwright_default_ok():
+        out.append(pytest.param(None, id="playwright-default"))
+    return out or [pytest.param(None, id="no-browser", marks=pytest.mark.skip(
+        reason="needs playwright and a Chromium build"))]
+
+
 def _playwright_ok():
     try:
         import playwright.sync_api  # noqa: F401
@@ -421,17 +448,19 @@ def _hostile_launch(monkeypatch, chromium, public_port, internal_port, keep_kill
         args.append("--host-resolver-rules=" + ", ".join(
             pins + [f"MAP * 127.0.0.1:{internal_port}", "EXCLUDE 127.0.0.1"]))
         kw["args"] = args
-        kw["executable_path"] = chromium
+        if chromium:
+            kw["executable_path"] = chromium
         return real_launch(self, **kw)
 
     monkeypatch.setattr(BrowserType, "launch", launch)
 
 
-@pytest.mark.skipif(not _playwright_ok() or _chromium_path() is None,
-                    reason="needs playwright and a local Chromium")
+@pytest.mark.skipif(not _playwright_ok(), reason="needs playwright")
+@pytest.mark.parametrize("chromium", _browsers())
 @pytest.mark.parametrize("keep_killswitch", [True, False],
                          ids=["with-proxy-killswitch", "interception-only"])
-def test_real_chromium_never_connects_on_its_own(monkeypatch, two_servers, keep_killswitch):
+def test_real_chromium_never_connects_on_its_own(monkeypatch, two_servers, keep_killswitch,
+                                                 chromium):
     public_port, internal_port, internal_hits = two_servers
 
     real_getaddrinfo = socket.getaddrinfo
@@ -453,8 +482,7 @@ def test_real_chromium_never_connects_on_its_own(monkeypatch, two_servers, keep_
 
     monkeypatch.setattr(verify.socket, "getaddrinfo", fake_getaddrinfo)
     monkeypatch.setattr(verify.socket, "create_connection", fake_create_connection)
-    _hostile_launch(monkeypatch, _chromium_path(), public_port, internal_port,
-                    keep_killswitch)
+    _hostile_launch(monkeypatch, chromium, public_port, internal_port, keep_killswitch)
 
     html = verify._render_page("http://main.example/u/alice", timeout=15)
 
@@ -471,3 +499,17 @@ def test_real_chromium_never_connects_on_its_own(monkeypatch, two_servers, keep_
     # script and a cross-origin XHR.
     assert "Alice Wademan" in html
     assert "Lives in Springfield" in html
+
+
+def test_render_unroutes_before_closing(monkeypatch):
+    # A request still in the router when the browser closed left a pending
+    # route handler, and asyncio printed "Exception in callback ...
+    # CancelledError" to stderr on every such render (seen on a real render
+    # of github.com, 2026-11-21). Routes are dropped first, ignoring errors.
+    monkeypatch.setattr(verify, "_pinned_target",
+                        lambda url: ("https", "site.example", 443, "93.184.216.34"))
+    monkeypatch.setattr(verify._RenderRouter, "fetch",
+                        lambda self, m, url, h, b: (200, {}, b"<html></html>", url))
+    seen = _fake_playwright(monkeypatch, [])
+    assert verify._render_page("https://site.example/p") == "<html>ok</html>"
+    assert seen["events"] == [("unroute_all", "ignoreErrors"), ("close", None)]

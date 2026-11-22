@@ -175,6 +175,7 @@ Some sources need a free token or key:
 | `COURTLISTENER_TOKEN` | enables `court_search` (the CourtListener API refuses anonymous calls, checked 2026-11-21) |
 | `HARRIER_COURT_ANONYMOUS=1` | makes `court_search` try without a token (by default it skips the request, since it would be refused) |
 | `HARRIER_PHONE_DORKS_AS_FINDINGS=1` | keeps PhoneInfoga's googlesearch links as a finding (by default they go to `next_steps`) |
+| `HARRIER_HARVESTER_HOME=<dir>` | HOME for theHarvester (its `~/.theHarvester/` config and `~/.local/share/theHarvester/stash.sqlite` scan history). By default a throwaway dir per run, so nothing is left in your home |
 | `FAMILYSEARCH_ACCESS_TOKEN` | enables the FamilySearch record-search API |
 | `NUMVERIFY_API_KEY` | enables PhoneInfoga's numverify scanner (read by PhoneInfoga itself) |
 | `GOOGLECSE_CX`, `GOOGLE_API_KEY` | enable PhoneInfoga's googlecse scanner (read by PhoneInfoga itself) |
@@ -297,7 +298,7 @@ uv run pytest          # full suite
 uv run pytest -q       # quiet
 ```
 
-The suite uses fakes, fixtures and local loopback servers; it makes no lookups on the internet. One render test drives a real Chromium against those local servers when one is available (Playwright's, a system `chromium`, or the path in `HARRIER_TEST_CHROMIUM`) and is skipped otherwise. Run `uv run pytest -q` for the current count rather than trusting a number in this file.
+The suite uses fakes, fixtures and local loopback servers; it makes no lookups on the internet. One render test drives a real Chromium against those local servers, once per build available: a local Chromium (the path in `HARRIER_TEST_CHROMIUM`, a system `chromium`, or Playwright's full build) and Playwright's default headless shell, which is what production launches (`uv run playwright install chromium-headless-shell`). It is skipped when neither is present. Run `uv run pytest -q` for the current count rather than trusting a number in this file.
 
 ---
 

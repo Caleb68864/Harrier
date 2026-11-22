@@ -326,7 +326,7 @@ def test_run_subprocess_clamps_timeout(monkeypatch):
 
     seen = {}
 
-    def fake_run(args, limit):
+    def fake_run(args, limit, env=None):
         seen["timeout"] = limit
         return subprocess.CompletedProcess(args, 0, "", "")
 

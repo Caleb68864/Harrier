@@ -12,7 +12,7 @@ Their agreement repeats one observation, so it doesn't earn ``high``. Any
 other tool is its own family.
 
 Findings are grouped by a normalized key (value, else URL). Within a group we
-keep one representative per source tool (dropping exact intra-tool duplicates)
+keep one representative per (source tool, selector), dropping exact intra-tool duplicates,
 and stamp every survivor with the group's confidence. ``blocked`` findings are
 passed through untouched — a manual step is not a confirmed claim.
 """
@@ -58,11 +58,15 @@ def correlate(findings: list[Finding]) -> list[Finding]:
     for group in groups.values():
         families = {evidence_family(f.source_tool) for f in group}
         confidence = "high" if len(families) >= 2 else "low"
-        seen_sources: set[str] = set()
+        # Decided by agent 2026-11-21 (roadmap O26): a duplicate is the same
+        # tool AND the same searched selector. Two emails both registered on
+        # one site (holehe value = site name) are two findings, not one.
+        seen_sources: set[tuple[str, str]] = set()
         for f in group:
-            if f.source_tool in seen_sources:
+            dup_key = (f.source_tool, (f.selector or "").strip().lower())
+            if dup_key in seen_sources:
                 continue  # drop exact intra-tool duplicate
-            seen_sources.add(f.source_tool)
+            seen_sources.add(dup_key)
             f.confidence = confidence
             out.append(f)
 

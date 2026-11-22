@@ -25,7 +25,7 @@ def test_phone_nonzero_exit_is_error_with_stderr(monkeypatch):
 def test_domain_nonzero_exit_is_error_with_stderr(monkeypatch):
     monkeypatch.setattr(domain, "binary_available", lambda n: True)
     monkeypatch.setattr(domain, "run_subprocess",
-                        lambda args, timeout=30: _fake_proc(2, "", "unrecognized arguments: -b"))
+                        lambda args, timeout=30, **kw: _fake_proc(2, "", "unrecognized arguments: -b"))
     res = domain.run("example.com")
     assert res.status == "error"
     assert "exit 2" in res.reason and "unrecognized arguments" in res.reason
@@ -37,7 +37,7 @@ def test_domain_nonzero_exit_with_report_keeps_findings(monkeypatch):
     import json
     import os
 
-    def fake(args, timeout=30):
+    def fake(args, timeout=30, **kw):
         out = args[args.index("-f") + 1]
         with open(out + ".json", "w") as fh:
             json.dump({"emails": ["a@example.com"]}, fh)
@@ -104,7 +104,7 @@ def test_phone_parses_console_output(monkeypatch):
     monkeypatch.setattr(phone, "binary_available", lambda n: True)
     seen = {}
 
-    def fake(args, timeout=30):
+    def fake(args, timeout=30, **kw):
         seen["args"] = args
         return _fake_proc(0, _CONSOLE)
 
