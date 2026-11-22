@@ -69,9 +69,8 @@ def test_free_sources_pinned_to_checked_harvester_version():
     # theHarvester: see the comment above FREE_SOURCES.
     assert domain.HARVESTER_VERSION_CHECKED == "4.11.1"
     assert domain.FREE_SOURCES == (
-        "certspotter", "commoncrawl", "crtsh", "hackertarget", "otx",
-        "rapiddns", "robtex", "subdomaincenter", "thc", "urlscan",
-        "waybackarchive",
+        "certspotter", "crtsh", "hackertarget", "otx", "rapiddns", "robtex",
+        "subdomaincenter", "thc", "urlscan", "waybackarchive",
     )
     assert set(domain.FREE_SOURCES) <= _HARVESTER_4_11_1_ENGINES
     assert not set(domain.FREE_SOURCES) & _HARVESTER_4_11_1_KEYED
@@ -92,3 +91,11 @@ def test_threatcrowd_is_excluded_and_the_harvest_budget_covers_the_slow_sources(
     assert domain.HARVEST_TIMEOUT == 120
     import inspect
     assert inspect.signature(domain.run).parameters["timeout"].default == 120
+
+
+def test_commoncrawl_is_dropped():
+    # Owner, 2026-11-21 (O28): alone it took 109 s for 0 hosts (Common
+    # Crawl's index answered 504) and pushed whole runs past the 120 s
+    # budget, which returns nothing at all.
+    assert "commoncrawl" not in domain.FREE_SOURCES
+    assert len(domain.FREE_SOURCES) == 10
