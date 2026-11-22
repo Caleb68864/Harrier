@@ -116,7 +116,7 @@ def test_phone_parses_console_output(monkeypatch):
     assert set(by_scanner) == {"local", "numverify", "googlesearch"}
     assert by_scanner["numverify"].value == "Example Wireless"
     assert by_scanner["local"].value == "US"
-    assert by_scanner["googlesearch"].raw["fields"]["URL"] == [
+    assert by_scanner["googlesearch"].raw["fields"]["Social media"]["URL"] == [
         "https://www.google.com/search?q=a", "https://www.google.com/search?q=b"]
     assert "ovh: not available" in res.reason
 

@@ -14,7 +14,7 @@ we parse the console format::
     Running scan for phone number +1...
     Results for <scanner>
     <Field>: <value>
-    <Struct field>:
+    <Header>:
     \t<Nested field>: <value>
 
     The following scanners returned errors:
@@ -41,6 +41,9 @@ from harrier.schema import Finding
 
 TOOL = "phone"
 PHONEINFOGA_BIN = "phoneinfoga"
+# The release the console parser was run against (a real ``scan``, see
+# tests/test_phoneinfoga_real.py). Re-check the parser before changing it.
+PHONEINFOGA_VERSION_CHECKED = "2.11.0"
 
 # E.164-ish: optional +, digits, common separators we strip.
 _PHONE_ALLOWED = re.compile(r"^\+?[0-9]+$")
@@ -107,14 +110,20 @@ _VALUE_FIELDS = ("Carrier", "Line type", "Location", "Country name", "Country")
 def _parse_console(stdout: str) -> tuple[dict[str, dict], dict[str, str]]:
     """Parse ``phoneinfoga scan`` console output.
 
-    Returns ``({scanner: {field: value | [values]}}, {scanner: error})``.
-    Nested struct fields are flattened (``Response > Format > Number Format``
-    becomes ``Number Format``); a field seen twice becomes a list (the
-    googlesearch scanner prints one ``URL:`` per search link).
+    Returns ``({scanner: fields}, {scanner: error})``. A top-level field is
+    ``value``, or a list if the scanner printed it more than once. A
+    ``Header:`` line opens a nested block, indented one tab per level
+    (``lib/output/console.go``); its fields are kept under the header, and a
+    nested value is always a list, because a slice is printed one element
+    at a time and a one-element slice looks like a single field. So the
+    googlesearch scanner gives ``{"Social media": {"URL": [...]},
+    "Reputation": {"URL": [...]}, ...}`` (checked against a real v2.11.0
+    run). A header with nothing under it is left out.
     """
     results: dict[str, dict] = {}
     errors: dict[str, str] = {}
     section: dict | None = None
+    headers: list[str] = []  # open "Header:" names, one per indent level
     in_errors = False
     for line in _ANSI_RE.sub("", stdout or "").splitlines():
         text = line.strip()
@@ -123,23 +132,36 @@ def _parse_console(stdout: str) -> tuple[dict[str, dict], dict[str, str]]:
         m = _RESULTS_RE.match(text)
         if m:
             section = results.setdefault(m.group(1).strip(), {})
-            in_errors = False
+            headers, in_errors = [], False
             continue
         if text == _ERRORS_HEADER:
-            section, in_errors = None, True
+            section, headers, in_errors = None, [], True
             continue
+        depth = len(line) - len(line.lstrip("\t"))
+        del headers[depth:]  # a shallower line closes deeper blocks
         key, sep, value = text.partition(": ")
-        if not sep:  # "Field:" header of a nested struct/list, or noise
-            continue
+        if not sep:
+            if text.endswith(":") and section is not None and len(headers) == depth:
+                headers.append(text[:-1].strip())
+            continue  # a header (or noise) carries no value itself
+        key, value = key.strip(), value.strip()
         if in_errors:
-            errors[key.strip()] = value.strip()
-        elif section is not None:
-            key, value = key.strip(), value.strip()
-            if key in section:
-                prev = section[key]
-                section[key] = (prev if isinstance(prev, list) else [prev]) + [value]
+            errors[key] = value
+        elif section is None:
+            continue
+        elif headers:
+            target = section
+            for name in headers:
+                target = target.setdefault(name, {})
+                if not isinstance(target, dict):  # header clashes with a field
+                    break
             else:
-                section[key] = value
+                target.setdefault(key, []).append(value)
+        elif key in section:
+            prev = section[key]
+            section[key] = (prev if isinstance(prev, list) else [prev]) + [value]
+        else:
+            section[key] = value
     return results, errors
 
 
