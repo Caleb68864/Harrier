@@ -173,6 +173,8 @@ Some sources need a free token or key:
 | Env var | Effect |
 |---------|--------|
 | `COURTLISTENER_TOKEN` | enables `court_search` (the CourtListener API refuses anonymous calls, checked 2026-11-21) |
+| `HARRIER_COURT_ANONYMOUS=1` | makes `court_search` try without a token (by default it skips the request, since it would be refused) |
+| `HARRIER_PHONE_DORKS_AS_FINDINGS=1` | keeps PhoneInfoga's googlesearch links as a finding (by default they go to `next_steps`) |
 | `FAMILYSEARCH_ACCESS_TOKEN` | enables the FamilySearch record-search API |
 | `NUMVERIFY_API_KEY` | enables PhoneInfoga's numverify scanner (read by PhoneInfoga itself) |
 | `GOOGLECSE_CX`, `GOOGLE_API_KEY` | enable PhoneInfoga's googlecse scanner (read by PhoneInfoga itself) |

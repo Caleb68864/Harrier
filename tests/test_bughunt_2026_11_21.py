@@ -70,6 +70,7 @@ def test_court_401_without_token_says_a_token_is_required(monkeypatch):
     # Checked 2026-11-21: v4 search answers 401 "Authentication credentials
     # were not provided." to an anonymous call (v3: 403).
     monkeypatch.delenv("COURTLISTENER_TOKEN", raising=False)
+    monkeypatch.setenv("HARRIER_COURT_ANONYMOUS", "1")  # O23: else no request
     monkeypatch.setattr(court, "_fetch", lambda q, t: (401, None))
     res = court.run("Amanda Bennett")
     assert res.status == "unavailable"

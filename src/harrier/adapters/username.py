@@ -98,7 +98,7 @@ def _run_sherlock(
         try:
             proc = run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return AdapterResult(status="unavailable", tool="sherlock",
+            return AdapterResult(status="timeout", tool="sherlock",
                                  reason="sherlock timed out")
         except (FileNotFoundError, OSError):
             return None
@@ -167,7 +167,7 @@ def _run_maigret(selector: str, timeout: int) -> AdapterResult | None:
         try:
             proc = run_subprocess(args, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return AdapterResult(status="unavailable", tool="maigret",
+            return AdapterResult(status="timeout", tool="maigret",
                                  reason="maigret timed out")
         except (FileNotFoundError, OSError):
             return None
@@ -195,8 +195,9 @@ def run(
     check) or ``"maigret"`` (slower, but extracts profile METADATA for the
     verification pre-check, Phase 3a). The other is the fallback if the primary
     binary is absent. ``timeout`` bounds the whole sweep; ``per_site_timeout`` is
-    the per-request timeout; ``sites`` restricts the Sherlock sweep (defaults to
-    :data:`DEFAULT_SITES` so fan-out stays fast).
+    the per-request timeout; ``sites`` restricts the Sherlock sweep to those
+    names. ``None``, ``[]`` or only blank names mean :data:`DEFAULT_SITES`
+    (so fan-out stays fast); there is no "all sites" option.
     """
     try:
         selector = validate_selector(selector)
@@ -207,7 +208,12 @@ def run(
         return AdapterResult(status="error", tool=TOOL,
                              reason=f"unknown engine {engine!r}; use 'sherlock' or 'maigret'")
 
-    site_list = DEFAULT_SITES if sites is None else sites
+    # Decided by agent 2026-11-21 (roadmap O25): no names (None, [] or only
+    # blanks) means the default set. An empty list used to pass no --site
+    # flag, i.e. Sherlock's full ~400 sites, which takes about a minute and
+    # times out under person_sweep's fan-out.
+    site_list = [s.strip() for s in (sites or []) if isinstance(s, str) and s.strip()] \
+        or DEFAULT_SITES
     if engine == "maigret":
         result = _run_maigret(selector, timeout)
         if result is None:  # maigret absent → fall back to sherlock existence
@@ -236,7 +242,8 @@ def register(app) -> None:
         """Enumerate a username across social sites via Sherlock/Maigret.
 
         ``engine``: "sherlock" (fast existence) or "maigret" (slower, extracts
-        profile metadata). ``sites`` restricts the Sherlock site list.
+        profile metadata). ``sites`` restricts the Sherlock site list; omit
+        it or pass [] for the default ten sites.
         """
         res = run(selector, timeout=timeout, engine=engine, sites=sites)
         return {

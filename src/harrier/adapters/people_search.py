@@ -19,6 +19,7 @@ lazily so a missing browser degrades to ``unavailable`` rather than crashing.
 from __future__ import annotations
 
 import random
+import re
 import time
 from typing import Optional
 from urllib.parse import quote, urlencode
@@ -35,10 +36,22 @@ DEFAULT_SITE = "truepeoplesearch.com"
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
-# HTML markers that mean "the anti-bot wall stopped us".
-_BLOCK_MARKERS = ("captcha", "cloudflare", "just a moment", "access denied",
-                  "unusual traffic", "verify you are", "attention required",
-                  "cf-chl")
+# Decided by agent 2026-11-21 (roadmap O24): look for an anti-bot wall, not
+# for the word "cloudflare". A page served through Cloudflare (cdnjs, the
+# insights beacon, a "Protected by Cloudflare" footer) or carrying a reCAPTCHA
+# form is not a challenge. Markers of the interstitial itself go anywhere in
+# the page; generic words only count in the <title>, where an interstitial
+# puts them and a results page does not.
+_CHALLENGE_MARKERS = (
+    "/cdn-cgi/challenge-platform/",  # Cloudflare challenge scripts
+    "_cf_chl_opt", "cf-chl-", "cf-error-details",
+    "challenge-error-text", "cf-browser-verification",
+    "unusual traffic",  # Google-style "unusual traffic from your network"
+)
+_TITLE_MARKERS = ("just a moment", "attention required", "access denied",
+                  "captcha", "are you a robot", "security check",
+                  "verify you are human", "checking your browser")
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 
 # Minimum seconds between real requests, plus jitter, to stay polite.
 _MIN_INTERVAL = 3.0
@@ -72,7 +85,10 @@ def _looks_blocked(status: Optional[int], html: str) -> bool:
     if status is not None and status >= 400:
         return True
     low = (html or "").lower()
-    return any(m in low for m in _BLOCK_MARKERS)
+    if any(m in low for m in _CHALLENGE_MARKERS):
+        return True
+    title = _TITLE_RE.search(low)
+    return bool(title) and any(m in title.group(1) for m in _TITLE_MARKERS)
 
 
 @log_outcome

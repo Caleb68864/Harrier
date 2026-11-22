@@ -3,6 +3,8 @@ tool/API output and must report actionable reasons on failure."""
 
 import io
 import json
+
+import pytest
 import subprocess
 
 import harrier.adapters.court as court
@@ -540,3 +542,10 @@ def test_healthy_adapter_call_logs_nothing(monkeypatch, caplog):
         # Every scanner ran (a keyless run carries a reason, logged at INFO).
         assert phone.run("+15555550100").status == "ok"
     assert [r for r in caplog.records if r.name.startswith("harrier.adapters")] == []
+
+
+@pytest.fixture(autouse=True)
+def _court_token(monkeypatch):
+    # court.run skips the request without a token (O23); these tests fake
+    # the request itself.
+    monkeypatch.setenv("COURTLISTENER_TOKEN", "test-token")

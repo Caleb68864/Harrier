@@ -5,6 +5,8 @@ its tool's output into :class:`~harrier.schema.Finding` objects. The cardinal
 rule (spec A-2 / graceful degradation): a missing binary, missing import, bad
 selector, or tool crash must yield ``status="unavailable"`` (or ``"blocked"`` /
 ``"error"``) with an empty finding list — it must NEVER raise out of the sweep.
+A tool that overruns its own timeout is ``"timeout"``, the same word the sweep
+uses for a job that overruns the runner's budget (roadmap O32).
 
 Shared plumbing lives here:
   * :func:`validate_selector` — rejects shell metacharacters (A-2).
@@ -87,11 +89,15 @@ class AdapterResult(list):
     """
 
     def __init__(self, findings: Iterable[Finding] | None = None, *, status: str,
-                 tool: str, reason: str | None = None):
+                 tool: str, reason: str | None = None,
+                 next_steps: Iterable[str] | None = None):
         super().__init__(findings or [])
         self.status = status
         self.tool = tool
         self.reason = reason
+        # Things for the analyst to do by hand (e.g. searches to run); not
+        # findings, because nothing was observed.
+        self.next_steps = list(next_steps or [])
 
     @property
     def findings(self) -> list[Finding]:

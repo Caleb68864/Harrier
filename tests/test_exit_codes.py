@@ -113,11 +113,12 @@ def test_phone_parses_console_output(monkeypatch):
     assert seen["args"] == ["phoneinfoga", "scan", "-n", "+15555550100"]
     assert res.status == "ok"
     by_scanner = {f.raw["scanner"]: f for f in res}
-    assert set(by_scanner) == {"local", "numverify", "googlesearch"}
+    assert set(by_scanner) == {"local", "numverify"}  # googlesearch: next_steps (O22)
     assert by_scanner["numverify"].value == "Example Wireless"
     assert by_scanner["local"].value == "US"
-    assert by_scanner["googlesearch"].raw["fields"]["Social media"]["URL"] == [
-        "https://www.google.com/search?q=a", "https://www.google.com/search?q=b"]
+    assert res.next_steps == [
+        "Search by hand (PhoneInfoga googlesearch, Social media): https://www.google.com/search?q=a",
+        "Search by hand (PhoneInfoga googlesearch, Social media): https://www.google.com/search?q=b"]
     assert "ovh: not available" in res.reason
 
 

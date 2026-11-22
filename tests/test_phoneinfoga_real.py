@@ -77,14 +77,9 @@ def test_version_checked_is_pinned():
     assert phone.PHONEINFOGA_VERSION_CHECKED == "2.11.0"
 
 
-def test_real_scan_keeps_googlesearch_categories(monkeypatch):
-    res = _run(monkeypatch, _REAL_SCAN)
-    assert res.status == "ok"
-    by_scanner = {f.raw["scanner"]: f for f in res}
-    assert set(by_scanner) == {"googlesearch", "local"}
-    assert by_scanner["local"].value == "US"
-    assert by_scanner["local"].raw["fields"]["E164"] == "+12025550100"
-    fields = by_scanner["googlesearch"].raw["fields"]
+def test_real_scan_keeps_googlesearch_categories():
+    results, _ = phone._parse_console(_REAL_SCAN)
+    fields = results["googlesearch"]
     # Each URL stays under the category PhoneInfoga printed it in; one flat
     # "URL" list of 45 dorks would hide which search is which.
     assert set(fields) == {"Social media", "Disposable providers", "Reputation",
@@ -95,6 +90,68 @@ def test_real_scan_keeps_googlesearch_categories(monkeypatch):
     # A category with one entry is still a list, like the others.
     assert len(fields["General"]["URL"]) == 1
     assert isinstance(fields["General"]["URL"], list)
+
+
+def test_googlesearch_links_are_next_steps_not_findings(monkeypatch):
+    # O22, decided by agent 2026-11-21: googlesearch makes no request; it
+    # prints Google searches to try. Those are steps for the analyst.
+    monkeypatch.delenv("HARRIER_PHONE_DORKS_AS_FINDINGS", raising=False)
+    res = _run(monkeypatch, _REAL_SCAN)
+    assert res.status == "ok"
+    assert [f.raw["scanner"] for f in res] == ["local"]
+    assert res[0].value == "US"
+    assert res[0].raw["fields"]["E164"] == "+12025550100"
+    steps = res.next_steps
+    assert len(steps) == 9  # 2+2+2+2+1 in the cut-down capture
+    assert steps[0].startswith("Search by hand (PhoneInfoga googlesearch, Social media): "
+                               "https://www.google.com/search?q=site%3Afacebook.com")
+    assert any(s.startswith("Search by hand (PhoneInfoga googlesearch, General): ")
+               for s in steps)
+
+
+def test_dorks_as_findings_setting_restores_the_old_shape(monkeypatch):
+    monkeypatch.setenv("HARRIER_PHONE_DORKS_AS_FINDINGS", "1")
+    res = _run(monkeypatch, _REAL_SCAN)
+    assert sorted(f.raw["scanner"] for f in res) == ["googlesearch", "local"]
+    assert res.next_steps == []
+
+
+def test_phone_lookup_payload_carries_next_steps(monkeypatch):
+    import asyncio
+    import json
+
+    from harrier.server import create_app
+
+    monkeypatch.delenv("HARRIER_PHONE_DORKS_AS_FINDINGS", raising=False)
+    monkeypatch.setattr(phone, "binary_available", lambda n: True)
+    monkeypatch.setattr(phone, "run_subprocess", lambda args, timeout=30: SimpleNamespace(
+        returncode=0, stdout=_REAL_SCAN, stderr=""))
+
+    async def go():
+        r = await create_app().call_tool("phone_lookup", {"selector": "+12025550100"})
+        content = r[0] if isinstance(r, tuple) else r
+        return json.loads(content[0].text)
+
+    out = asyncio.run(go())
+    assert out["count"] == 1 and len(out["next_steps"]) == 9
+
+
+def test_sweep_and_investigate_pass_next_steps_on(monkeypatch):
+    import harrier.investigate as inv
+    import harrier.sweep as sweep
+    from harrier.adapters import AdapterResult
+
+    monkeypatch.delenv("HARRIER_PHONE_DORKS_AS_FINDINGS", raising=False)
+    monkeypatch.setattr(phone, "binary_available", lambda n: True)
+    monkeypatch.setattr(phone, "run_subprocess", lambda args, timeout=30: SimpleNamespace(
+        returncode=0, stdout=_REAL_SCAN, stderr=""))
+    res = sweep.person_sweep("Amanda Bennett", phone="+12025550100", permute=False)
+    assert len(res["next_steps"]) == 9
+    monkeypatch.setattr(inv.court_mod, "run", lambda name: AdapterResult(
+        status="empty", tool="courtlistener"))
+    out = inv.investigate("Amanda Bennett", phone="+12025550100", verify=False,
+                          max_rounds=1)
+    assert sum(s.startswith("Search by hand") for s in out["next_steps"]) == 9
 
 
 def test_real_scan_scanner_error_is_reported(monkeypatch):
