@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import http.client
 import ipaddress
+import logging
 import re
 import socket
 import ssl
@@ -380,6 +381,17 @@ def _close_websocket(ws) -> None:
         ws.close()
 
 
+log = logging.getLogger("harrier.verify")
+
+
+class RenderUnavailable(RuntimeError):
+    """The render could not run (no browser, launch/navigation failure).
+
+    Distinct from ``None`` (URL refused, or no page to render), so verify can
+    say the render never happened instead of leaving a silent "unverifiable".
+    """
+
+
 def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
     """Render a page in headless Chromium (executes JS). None if unavailable/failed.
 
@@ -395,8 +407,8 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
         from playwright.sync_api import sync_playwright
 
         from harrier.runner import run_in_thread
-    except Exception:  # noqa: BLE001 — browser lib absent
-        return None
+    except Exception as exc:  # noqa: BLE001 — browser lib absent
+        raise RenderUnavailable(f"playwright not importable ({type(exc).__name__})") from exc
 
     def _do() -> str | None:
         dead = _closed_port()
@@ -443,8 +455,11 @@ def _render_page(url: str, timeout: int = _RENDER_TIMEOUT) -> str | None:
         # run_in_thread offloads it off FastMCP's loop so the render fallback
         # actually works in the live server (not just in tests/CLI).
         return run_in_thread(_do)
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as exc:  # noqa: BLE001
+        first = (str(exc).strip().splitlines() or [""])[0][:200]
+        cause = f"{type(exc).__name__}: {first}" if first else type(exc).__name__
+        log.warning("render unavailable: %s", cause)
+        raise RenderUnavailable(cause) from exc
 
 
 def _identifying_text(body: str) -> str:
@@ -654,7 +669,15 @@ def verify_finding(finding: Finding, anchor: dict, timeout: int = _FETCH_TIMEOUT
 
     # Render fallback: retry JS-shell / blocked pages in a real browser.
     if render_fn and (finding.raw.get("verify") or {}).get("verdict") == "unverifiable":
-        html = render_fn(finding.url)
+        try:
+            html = render_fn(finding.url)
+        except RenderUnavailable as exc:
+            raw = dict(finding.raw)
+            raw["verify"] = {**raw.get("verify", {}), "render_error": str(exc)}
+            finding.raw = raw
+            finding.reason = (finding.reason + " · " if finding.reason else "") + \
+                f"verify: render unavailable ({exc}) — confirm manually"
+            return finding
         if html:
             _classify_reachable(finding, anchor, 200, html, rendered=True)
     return finding
@@ -664,7 +687,7 @@ def verify_findings(findings: list[Finding], anchor: dict, max_verify: int = 12,
                     timeout: int = _FETCH_TIMEOUT, render: bool = True) -> tuple[list[Finding], dict]:
     """Verify up to ``max_verify`` findings with a URL. Returns (findings, stats)."""
     stats = {"verified": 0, "false_positive": 0, "corroborated": 0,
-             "unverifiable": 0, "rendered": 0}
+             "unverifiable": 0, "rendered": 0, "render_failed": 0}
     render_fn = _render_page if render else None
     budget = max_verify
     for f in findings:
@@ -678,6 +701,8 @@ def verify_findings(findings: list[Finding], anchor: dict, max_verify: int = 12,
         stats["verified"] += 1
         if v.get("rendered"):
             stats["rendered"] += 1
+        if v.get("render_error"):
+            stats["render_failed"] += 1
         verdict = v.get("verdict")
         if verdict in stats:
             stats[verdict] += 1
